@@ -11,9 +11,10 @@ Terraform project to manage Cloudflare WAN (Magic WAN) IPsec tunnels at scale. C
 ## Quick Start
 
 ```bash
-terraform init
+cp terraform.tfvars.example terraform.tfvars
+# Fill in terraform.tfvars with your account credentials and Anycast IPs
 # Edit sites.csv with your site data
-# Set your API token in terraform.tfvars
+terraform init
 terraform plan
 terraform apply
 ```
@@ -27,14 +28,14 @@ After apply, the Aruba configuration CSV is at `output/aruba-config.csv`.
 | `site_name` | Yes | Unique site identifier (alphanumeric, hyphens, underscores). Becomes part of the tunnel name. |
 | `site_index` | Yes | Integer starting at 0. Determines /31 IP allocation from the supernet. Must be unique. |
 | `customer_gw_ip` | Yes | Aruba EdgeConnect public WAN IP (IPsec endpoint). |
-| `lan_subnets` | No | Placeholder for future static routes. Semicolon-delimited CIDRs (e.g. `192.168.1.0/24;10.10.0.0/16`). |
+| `lan_subnets` | No | Comma-delimited CIDRs for Cloudflare static routes. Quote the field when providing multiple subnets. |
 
 Example:
 ```csv
 site_name,site_index,customer_gw_ip,lan_subnets
 hq,0,203.0.113.1,
-branch-chicago,1,198.51.100.10,
-branch-denver,2,198.51.100.20,192.168.1.0/24;192.168.2.0/24
+branch-chicago,1,198.51.100.10,192.168.1.0/24
+branch-denver,2,198.51.100.20,"192.168.1.0/24,192.168.2.0/24"
 ```
 
 ## IP Allocation
@@ -84,19 +85,30 @@ If `fqdn_id` shows `CHECK_DASHBOARD`, look it up manually: **Cloudflare Dashboar
 
 | Variable | Default | Description |
 |---|---|---|
-| `cloudflare_api_token` | *(required)* | API token (sensitive) |
-| `cloudflare_account_id` | `909f139a...` | Account ID |
-| `anycast_ip_1` | `162.159.66.205` | Primary Anycast IP |
-| `anycast_ip_2` | `172.64.242.205` | Secondary Anycast IP |
-| `tunnel_supernet` | `10.120.0.0/22` | /31 allocation supernet |
+| `cloudflare_api_token` | *(required)* | API token — Magic WAN: Edit + Account Settings: Read |
+| `cloudflare_account_id` | *(required)* | Cloudflare account ID |
+| `cloudflare_conduit_id` | *(required)* | Conduit ID for IKE FQDN identifier |
+| `anycast_ip_1` | *(required)* | Primary Anycast IP (from your account team) |
+| `anycast_ip_2` | *(required)* | Secondary Anycast IP (from your account team) |
+| `tunnel_supernet` | *(required)* | Supernet for /31 inside address allocation |
 | `health_check_direction` | `unidirectional` | `unidirectional` or `bidirectional` |
 | `health_check_type` | `reply` | `reply` or `request` |
 | `health_check_rate` | `mid` | `low`, `mid`, or `high` |
-| `replay_protection` | `false` | IPsec anti-replay |
+| `replay_protection` | `false` | IPsec anti-replay (disable for Aruba EdgeConnect) |
+
+## Retrieving the PSK
+
+The pre-shared key is generated once and shared across all tunnels. Retrieve it after apply:
+
+```bash
+terraform output -raw tunnel_psk
+```
+
+The PSK is also included in `output/aruba-config.csv` for convenience.
 
 ## Security
 
-- `terraform.tfvars` contains the API token and is gitignored
-- `output/` directory contains the PSK in plaintext and is gitignored
-- State file (`terraform.tfstate`) contains the PSK — keep it local and secure
-- PSK is generated once and shared across all tunnels
+- `terraform.tfvars` contains the API token — gitignored, never commit it
+- `output/` contains the PSK in plaintext — gitignored
+- `terraform.tfstate` contains the PSK — keep it local and secure
+- PSK is generated once on first apply and stable across subsequent applies
