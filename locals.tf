@@ -66,7 +66,7 @@ locals {
     for key, tun in local.tunnel_definitions : key => {
       interface_cidr = cidrsubnet(var.tunnel_supernet, 9, tun.subnet_index)
       cf_ip          = cidrhost(cidrsubnet(var.tunnel_supernet, 9, tun.subnet_index), 0)
-      aruba_ip       = cidrhost(cidrsubnet(var.tunnel_supernet, 9, tun.subnet_index), 1)
+      cpe_ip         = cidrhost(cidrsubnet(var.tunnel_supernet, 9, tun.subnet_index), 1)
     }
   }
 

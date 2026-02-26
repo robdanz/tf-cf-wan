@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Terraform project managing Cloudflare WAN (Magic WAN) IPsec tunnels at scale. Creates 2 IPsec tunnels per site (primary + secondary, one to each Cloudflare Anycast IP) and generates an output CSV for Aruba EdgeConnect SDWAN configuration.
+Terraform project managing Cloudflare Magic WAN IPsec tunnels at scale. Creates 2 IPsec tunnels per site (primary + secondary, one to each Cloudflare Anycast IP) and generates an output CSV for CPE configuration.
 
 ## Commands
 
@@ -12,33 +12,33 @@ Terraform project managing Cloudflare WAN (Magic WAN) IPsec tunnels at scale. Cr
 terraform init          # Download providers (cloudflare v5, random, local)
 terraform validate      # Check syntax
 terraform plan          # Preview changes
-terraform apply         # Create/update tunnels, generate output/aruba-config.csv
+terraform apply         # Create/update tunnels, generate output/cpe-config.csv
 terraform output -raw tunnel_psk   # Retrieve the shared PSK
 terraform state show 'cloudflare_magic_wan_ipsec_tunnel.tunnels["<site>-pri"]'  # Inspect a tunnel
 ```
 
 ## Architecture
 
-**Data flow:** `sites.csv` → `locals.tf` (parse/flatten/compute IPs) → `tunnels.tf` (create resources) → `outputs.tf` (generate aruba-config.csv)
+**Data flow:** `sites.csv` → `locals.tf` (parse/flatten/compute IPs) → `tunnels.tf` (create resources) → `outputs.tf` (generate cpe-config.csv)
 
 ### Core transformation in locals.tf
 
 1. `csvdecode()` reads `sites.csv` into a site map keyed by `site_name`
 2. Each site is flattened into 2 tunnel entries (`<site>-pri`, `<site>-sec`) via `flatten()`
 3. `/31` inside addresses are allocated from the supernet using `cidrsubnet(supernet, 9, site_index * 2 + offset)` — the explicit `site_index` column (not row position) controls IP allocation so CSV reordering is safe
-4. Within each /31: Cloudflare = `cidrhost(..., 0)` (even/lower), Aruba = `cidrhost(..., 1)` (odd/upper)
+4. Within each /31: Cloudflare = `cidrhost(..., 0)` (even/lower), CPE = `cidrhost(..., 1)` (odd/upper)
 
 ### Resource pattern in tunnels.tf
 
-Single `cloudflare_magic_wan_ipsec_tunnel` resource with `for_each = local.tunnel_definitions`. One `random_password` generates a shared PSK (`special = false` for Aruba IKE compatibility, `length` controlled by `var.psk_length`).
+Single `cloudflare_magic_wan_ipsec_tunnel` resource with `for_each = local.tunnel_definitions`. One `random_password` generates a shared PSK (`special = false` for CPE IKE compatibility, `length` controlled by `var.psk_length`).
 
 The `health_check.target` attribute is a nested object — must be set as `{ saved = <ip> }`, not a plain string.
 
 ### Output in outputs.tf
 
-`local_file` writes `output/aruba-config.csv` with sorted, deterministic rows.
+`local_file` writes `output/cpe-config.csv` with sorted, deterministic rows.
 
-The `fqdn_id` (Aruba's Local IKE Identifier) is constructed as:
+The `fqdn_id` (Local IKE Identifier) is constructed as:
 ```
 ${tunnel.id}.${var.cloudflare_conduit_id}.ipsec.cloudflare.com
 ```
@@ -60,7 +60,7 @@ All account-specific and tuneable values live in `terraform.tfvars` (gitignored)
 | `health_check_direction` | `unidirectional` / `bidirectional` |
 | `health_check_type` | `reply` / `request` |
 | `health_check_rate` | `low` / `mid` / `high` |
-| `replay_protection` | `true` / `false` — disable for Aruba EdgeConnect compatibility |
+| `replay_protection` | `true` / `false` — disable if CPE has IKE compatibility issues |
 
 ## Key Conventions
 

@@ -1,6 +1,6 @@
 # -------------------------------------------------------------------
 # Single PSK shared across all tunnels
-# Using special=false to avoid IKE compatibility issues with Aruba
+# Using special=false to avoid IKE compatibility issues with some CPE devices
 # -------------------------------------------------------------------
 resource "random_password" "tunnel_psk" {
   length  = var.psk_length

@@ -1,6 +1,6 @@
 # tf-mwan
 
-Terraform project to manage Cloudflare WAN (Magic WAN) IPsec tunnels at scale. Creates 2 IPsec tunnels per site (one to each Cloudflare Anycast IP) and outputs a CSV for Aruba EdgeConnect SDWAN configuration.
+Terraform project to manage Cloudflare Magic WAN IPsec tunnels at scale. Creates 2 IPsec tunnels per site (one to each Cloudflare Anycast IP) and outputs a CSV for CPE configuration.
 
 ## Prerequisites
 
@@ -19,7 +19,7 @@ terraform plan
 terraform apply
 ```
 
-After apply, the Aruba configuration CSV is at `output/aruba-config.csv`.
+After apply, the CPE configuration CSV is at `output/cpe-config.csv`.
 
 ## Input: sites.csv
 
@@ -27,7 +27,7 @@ After apply, the Aruba configuration CSV is at `output/aruba-config.csv`.
 |---|---|---|
 | `site_name` | Yes | Unique site identifier (alphanumeric, hyphens, underscores). Becomes part of the tunnel name. |
 | `site_index` | Yes | Integer starting at 0. Determines /31 IP allocation from the supernet. Must be unique. |
-| `customer_gw_ip` | Yes | Aruba EdgeConnect public WAN IP (IPsec endpoint). |
+| `customer_gw_ip` | Yes | CPE public WAN IP (IPsec endpoint). |
 | `lan_subnets` | No | Comma-delimited CIDRs for Cloudflare static routes. Quote the field when providing multiple subnets. |
 
 Example:
@@ -45,17 +45,17 @@ Inside tunnel addresses are allocated from `10.120.0.0/22` (512 /31 subnets, max
 - Site at `site_index` **i**:
   - Primary tunnel (Anycast 1): `/31` subnet index = `i * 2`
   - Secondary tunnel (Anycast 2): `/31` subnet index = `i * 2 + 1`
-- Within each /31: Cloudflare = lower (even) IP, Aruba = upper (odd) IP
+- Within each /31: Cloudflare = lower (even) IP, CPE = upper (odd) IP
 
 Example for `site_index=0`:
 ```
-pri: 10.120.0.0/31  (CF: 10.120.0.0, Aruba: 10.120.0.1)
-sec: 10.120.0.2/31  (CF: 10.120.0.2, Aruba: 10.120.0.3)
+pri: 10.120.0.0/31  (CF: 10.120.0.0, CPE: 10.120.0.1)
+sec: 10.120.0.2/31  (CF: 10.120.0.2, CPE: 10.120.0.3)
 ```
 
 ## Output: aruba-config.csv
 
-Generated at `output/aruba-config.csv` after `terraform apply`. Contains all values the Aruba team needs:
+Generated at `output/cpe-config.csv` after `terraform apply`. Contains all values needed to configure the CPE:
 
 | Column | Description |
 |---|---|
@@ -64,11 +64,11 @@ Generated at `output/aruba-config.csv` after `terraform apply`. Contains all val
 | `tunnel_name` | Cloudflare tunnel name (`<site>-<pri\|sec>`) |
 | `tunnel_id` | Cloudflare tunnel UUID |
 | `cloudflare_anycast_ip` | Cloudflare Anycast endpoint IP |
-| `customer_gw_ip` | Aruba WAN IP |
+| `customer_gw_ip` | CPE public WAN IP |
 | `interface_address_cidr` | /31 tunnel subnet |
 | `cf_inside_ip` | Cloudflare tunnel inner IP |
-| `aruba_inside_ip` | IP to configure on Aruba tunnel interface |
-| `fqdn_id` | Aruba "Local IKE Identifier" (Cloudflare-generated FQDN) |
+| `cpe_inside_ip` | IP to configure on the CPE tunnel interface |
+| `fqdn_id` | Local IKE Identifier (Cloudflare-generated FQDN) |
 | `psk` | Pre-shared key |
 
 ## Validating fqdn_id
@@ -94,7 +94,7 @@ If `fqdn_id` shows `CHECK_DASHBOARD`, look it up manually: **Cloudflare Dashboar
 | `health_check_direction` | `unidirectional` | `unidirectional` or `bidirectional` |
 | `health_check_type` | `reply` | `reply` or `request` |
 | `health_check_rate` | `mid` | `low`, `mid`, or `high` |
-| `replay_protection` | `false` | IPsec anti-replay (disable for Aruba EdgeConnect) |
+| `replay_protection` | `false` | IPsec anti-replay (disable if your CPE has compatibility issues) |
 
 ## Retrieving the PSK
 

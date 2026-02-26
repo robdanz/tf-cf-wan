@@ -47,5 +47,5 @@ health_check_rate = "mid"
 # -------------------------------------------------------------------
 # replay_protection: true | false
 #   Enables anti-replay protection in the Cloudflare-to-customer direction.
-#   Disable unless your CPE requires it (can cause issues with Aruba EdgeConnect).
+#   Disable if your CPE has IKE compatibility issues with anti-replay protection.
 replay_protection = false

@@ -9,7 +9,7 @@ resource "cloudflare_magic_wan_static_route" "routes" {
 
   account_id  = var.cloudflare_account_id
   prefix      = each.value.prefix
-  nexthop     = local.tunnel_ips[each.value.tunnel_key].aruba_ip
+  nexthop     = local.tunnel_ips[each.value.tunnel_key].cpe_ip
   priority    = each.value.priority
   description = "Site ${each.value.site_name} ${each.value.tunnel_label}"
 
