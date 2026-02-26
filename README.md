@@ -53,7 +53,7 @@ pri: 10.120.0.0/31  (CF: 10.120.0.0, CPE: 10.120.0.1)
 sec: 10.120.0.2/31  (CF: 10.120.0.2, CPE: 10.120.0.3)
 ```
 
-## Output: aruba-config.csv
+## Output: cpe-config.csv
 
 Generated at `output/cpe-config.csv` after `terraform apply`. Contains all values needed to configure the CPE:
 
@@ -104,7 +104,7 @@ The pre-shared key is generated once and shared across all tunnels. Retrieve it 
 terraform output -raw tunnel_psk
 ```
 
-The PSK is also included in `output/aruba-config.csv` for convenience.
+The PSK is also included in `output/cpe-config.csv` for convenience.
 
 ## Security
 
