@@ -1,0 +1,51 @@
+# -------------------------------------------------------------------
+# Cloudflare account credentials
+# Copy this file to terraform.tfvars and fill in your values.
+# terraform.tfvars is gitignored — never commit it.
+# -------------------------------------------------------------------
+cloudflare_api_token  = "your-cloudflare-api-token"   # Magic WAN: Edit + Account Settings: Read
+cloudflare_account_id = "your-cloudflare-account-id"
+cloudflare_conduit_id = "your-conduit-id"
+
+# -------------------------------------------------------------------
+# Cloudflare Magic WAN Anycast endpoints
+# (provided by your Cloudflare account team)
+# -------------------------------------------------------------------
+anycast_ip_1 = "0.0.0.0"   # Primary Anycast IP from your account team
+anycast_ip_2 = "0.0.0.0"   # Secondary Anycast IP from your account team
+
+# -------------------------------------------------------------------
+# Tunnel inside address space
+# Supernet is carved into /31s: 9 additional bits from the prefix length
+# e.g. /22 + 9 = /31 -> 512 subnets, supports up to 256 sites
+# -------------------------------------------------------------------
+tunnel_supernet = "10.120.0.0/22"
+
+# -------------------------------------------------------------------
+# Tunnel health checks
+# -------------------------------------------------------------------
+health_check_enabled = true
+
+# direction: "unidirectional" | "bidirectional"
+#   unidirectional - probe arrives via tunnel, reply returns over open Internet
+#   bidirectional  - both probe and reply travel through the tunnel
+health_check_direction = "unidirectional"
+
+# type: "reply" | "request"
+#   reply   - Cloudflare sends an ICMP echo request, customer device replies
+#   request - customer device sends the ICMP echo request
+health_check_type = "reply"
+
+# rate: "low" | "mid" | "high"
+#   low  - ~1 probe/min
+#   mid  - ~1 probe/10s
+#   high - ~1 probe/1s
+health_check_rate = "mid"
+
+# -------------------------------------------------------------------
+# IPsec options
+# -------------------------------------------------------------------
+# replay_protection: true | false
+#   Enables anti-replay protection in the Cloudflare-to-customer direction.
+#   Disable unless your CPE requires it (can cause issues with Aruba EdgeConnect).
+replay_protection = false

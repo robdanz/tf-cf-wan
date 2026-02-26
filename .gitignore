@@ -1,0 +1,22 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfplan
+.terraform.lock.hcl
+
+# Secrets
+terraform.tfvars
+*.auto.tfvars
+
+# Output (contains PSK)
+output/
+
+# Local
+.DS_Store
+AI-SETUP-INSTRUCTIONS.md
+.claude/
+
+# IDE
+.vscode/
+.idea/
