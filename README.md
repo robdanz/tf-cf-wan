@@ -1,6 +1,6 @@
 # tf-mwan
 
-Terraform project to manage Cloudflare Magic WAN IPsec tunnels at scale. Creates 2 IPsec tunnels per site (one to each Cloudflare Anycast IP) and outputs a CSV for CPE configuration.
+Terraform project to manage Cloudflare WAN IPsec tunnels at scale. Creates 2 IPsec tunnels per site (one to each Cloudflare Anycast IP) and outputs a CSV for CPE configuration.
 
 ## Prerequisites
 
