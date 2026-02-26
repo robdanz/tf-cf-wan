@@ -87,7 +87,7 @@ If `fqdn_id` shows `CHECK_DASHBOARD`, look it up manually: **Cloudflare Dashboar
 |---|---|---|
 | `cloudflare_api_token` | *(required)* | API token — Magic WAN: Edit + Account Settings: Read |
 | `cloudflare_account_id` | *(required)* | Cloudflare account ID |
-| `cloudflare_conduit_id` | *(required)* | Conduit ID for IKE FQDN identifier |
+| `cloudflare_conduit_id` | *(required)* | Conduit ID for IKE FQDN identifier (from your account team) |
 | `anycast_ip_1` | *(required)* | Primary Anycast IP (from your account team) |
 | `anycast_ip_2` | *(required)* | Secondary Anycast IP (from your account team) |
 | `tunnel_supernet` | *(required)* | Supernet for /31 inside address allocation |

@@ -5,7 +5,7 @@
 # -------------------------------------------------------------------
 cloudflare_api_token  = "your-cloudflare-api-token"   # Magic WAN: Edit + Account Settings: Read
 cloudflare_account_id = "your-cloudflare-account-id"
-cloudflare_conduit_id = "your-conduit-id"
+cloudflare_conduit_id = "your-conduit-id"             # Provided by your Cloudflare account team
 
 # -------------------------------------------------------------------
 # Cloudflare Magic WAN Anycast endpoints
