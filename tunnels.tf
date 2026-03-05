@@ -17,7 +17,7 @@ resource "cloudflare_magic_wan_ipsec_tunnel" "tunnels" {
   name                = each.key
   description         = "Site ${each.value.site_name} ${each.value.tunnel_label} tunnel"
   cloudflare_endpoint = each.value.cloudflare_endpoint
-  customer_endpoint   = each.value.customer_gw_ip
+  customer_endpoint   = each.value.customer_gw_ip != "" ? each.value.customer_gw_ip : null
   interface_address   = local.tunnel_ips[each.key].interface_cidr
   psk                 = random_password.tunnel_psk.result
   replay_protection   = var.replay_protection
@@ -27,6 +27,6 @@ resource "cloudflare_magic_wan_ipsec_tunnel" "tunnels" {
     type      = var.health_check_type
     direction = var.health_check_direction
     rate      = var.health_check_rate
-    target    = { saved = each.value.customer_gw_ip }
+    target    = { saved = each.value.customer_gw_ip != "" ? each.value.customer_gw_ip : local.tunnel_ips[each.key].cpe_ip }
   }
 }

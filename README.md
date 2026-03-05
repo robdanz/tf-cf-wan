@@ -27,7 +27,7 @@ After apply, the CPE configuration CSV is at `output/cpe-config.csv`.
 |---|---|---|
 | `site_name` | Yes | Unique site identifier (alphanumeric, hyphens, underscores). Becomes part of the tunnel name. |
 | `site_index` | Yes | Integer starting at 0. Determines /31 IP allocation from the supernet. Must be unique. |
-| `customer_gw_ip` | Yes | CPE public WAN IP (IPsec endpoint). |
+| `customer_gw_ip` | No | CPE public WAN IP (IPsec endpoint). Leave blank for dynamically-addressed or NAT'd CPE — Cloudflare will accept any source IP and the CPE must initiate IKE using its `fqdn_id` as the local identifier. |
 | `lan_subnets` | No | Comma-delimited CIDRs for Cloudflare static routes. Quote the field when providing multiple subnets. |
 
 Example:
@@ -36,7 +36,10 @@ site_name,site_index,customer_gw_ip,lan_subnets
 hq,0,203.0.113.1,
 branch-chicago,1,198.51.100.10,192.168.1.0/24
 branch-denver,2,198.51.100.20,"192.168.1.0/24,192.168.2.0/24"
+branch-remote,3,,
 ```
+
+> **Dynamic/NAT'd CPE:** When `customer_gw_ip` is blank, `customer_endpoint` is omitted from the Cloudflare tunnel (no fixed remote IP), and the health check target falls back to the CPE inside tunnel IP. The CPE must initiate IKE and use the `fqdn_id` value from `cpe-config.csv` as its local IKE identifier.
 
 ## IP Allocation
 

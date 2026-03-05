@@ -64,6 +64,7 @@ All account-specific and tuneable values live in `terraform.tfvars` (gitignored)
 
 ## Key Conventions
 
+- `customer_gw_ip` is optional — blank for NAT'd/dynamic CPE; sets `customer_endpoint = null` and falls back to CPE inside IP for health check target
 - Tunnel names: `{site_name}-{pri|sec}`
 - Supernet `/22` + 9 bits = /31 → 512 subnets → max 256 sites
 - `site_index` in CSV must be unique, starting from 0; controls IP allocation independent of row order
