@@ -140,7 +140,8 @@ function Invoke-ECAPI {
         Headers     = @{ "X-XSRF-TOKEN" = $Auth.CsrfToken }
         ErrorAction = "Stop"
     }
-    if ($null -ne $Body) { $params.Body = ($Body | ConvertTo-Json -Depth 10 -Compress) }
+    # Use -InputObject (not pipeline) to preserve array type — piping unwraps single-element arrays
+    if ($null -ne $Body) { $params.Body = (ConvertTo-Json -InputObject $Body -Depth 10 -Compress) }
     if (-not $VerifySSL -and $PSVersionTable.PSVersion.Major -ge 6) { $params.SkipCertificateCheck = $true }
     return Invoke-RestMethod @params
 }
@@ -148,13 +149,10 @@ function Invoke-ECAPI {
 # ---------------------------------------------------------------------------
 # Build tunnel config payload (single tunnel)
 #
-# Phase 1 (IKE):  AES-256, SHA-256, DH Group 14, IKEv2
-# Phase 2 (ESP):  AES-256-SHA-256, PFS Group 14
-# Mode:           ipsec_udp (UDP-encapsulated, handles NAT traversal)
+# Phase 1 (IKE):  AES-256, SHA-256, DH Group 14, IKEv2, aggressive mode
+# Phase 2 (ESP):  AES-256 + AH SHA-256, PFS Group 14
+# Mode:           ipsec_ip (passthrough IPsec — confirmed working on ECOS)
 # Local identity: FQDN (fqdn_id from terraform output)
-#
-# NOTE: The key used for new tunnels (tunnel_name) may need to match the
-# appliance's expected format. Verify against your firmware version.
 # ---------------------------------------------------------------------------
 function Build-TunnelPayload {
     param($Tunnel, [string]$PSK)

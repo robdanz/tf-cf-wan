@@ -138,7 +138,8 @@ function Invoke-ECAPI {
         Headers     = @{ "X-XSRF-TOKEN" = $Auth.CsrfToken }
         ErrorAction = "Stop"
     }
-    if ($null -ne $Body) { $params.Body = ($Body | ConvertTo-Json -Depth 5 -Compress) }
+    # Use -InputObject (not pipeline) to preserve array type — piping unwraps single-element arrays
+    if ($null -ne $Body) { $params.Body = (ConvertTo-Json -InputObject $Body -Depth 10 -Compress) }
     if (-not $VerifySSL -and $PSVersionTable.PSVersion.Major -ge 6) { $params.SkipCertificateCheck = $true }
     return Invoke-RestMethod @params
 }
