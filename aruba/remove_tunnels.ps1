@@ -72,22 +72,13 @@ function Write-Info  { param([string]$Msg) Write-Host "INFO  $Msg" }
 function Write-Warn  { param([string]$Msg) Write-Host "WARN  $Msg" -ForegroundColor Yellow }
 function Write-Err   { param([string]$Msg) Write-Host "ERROR $Msg" -ForegroundColor Red }
 
-function Invoke-EC {
-    param([string]$Method, [string]$Uri, $Body = $null, $WebSession)
-    $params = @{
-        Method      = $Method
-        Uri         = $Uri
-        ContentType = "application/json"
-        WebSession  = $WebSession
-        ErrorAction = "Stop"
-    }
-    if ($null -ne $Body) { $params.Body = ($Body | ConvertTo-Json -Depth 5 -Compress) }
-    if (-not $VerifySSL -and $PSVersionTable.PSVersion.Major -ge 6) { $params.SkipCertificateCheck = $true }
-    return Invoke-RestMethod @params
-}
-
 # ---------------------------------------------------------------------------
 # EdgeConnect auth
+#
+# ECOS requires BOTH a session cookie AND an X-XSRF-TOKEN header on every
+# call after login. Connect-EdgeConnect returns a hashtable:
+#   @{ Session = <WebRequestSession>; CsrfToken = <string> }
+# Pass this as $Auth to all subsequent helpers.
 # ---------------------------------------------------------------------------
 function Connect-EdgeConnect {
     param([string]$Host_, [string]$User, [string]$Pass)
@@ -105,16 +96,51 @@ function Connect-EdgeConnect {
     } catch {
         throw "Login to $Host_ failed: $_"
     }
-    return (Get-Variable -Name session -ValueOnly)
+    $session = Get-Variable -Name session -ValueOnly
+    # Extract CSRF token from the edgeosCsrfToken cookie set by login
+    $csrfToken = $session.Cookies.GetCookies("https://$Host_") |
+        Where-Object { $_.Name -eq "edgeosCsrfToken" } |
+        Select-Object -First 1 -ExpandProperty Value
+    if (-not $csrfToken) {
+        throw "Login to $Host_ succeeded but edgeosCsrfToken cookie not found — cannot proceed"
+    }
+    return @{ Session = $session; CsrfToken = $csrfToken }
 }
 
 function Disconnect-EdgeConnect {
-    param([string]$Host_, $WebSession)
+    param([string]$Host_, [hashtable]$Auth)
     try {
-        $p = @{ Method = "DELETE"; Uri = "https://$Host_/rest/json/login"; WebSession = $WebSession; ErrorAction = "SilentlyContinue" }
+        $p = @{
+            Method      = "DELETE"
+            Uri         = "https://$Host_/rest/json/login"
+            WebSession  = $Auth.Session
+            Headers     = @{ "X-XSRF-TOKEN" = $Auth.CsrfToken }
+            ErrorAction = "SilentlyContinue"
+        }
         if (-not $VerifySSL -and $PSVersionTable.PSVersion.Major -ge 6) { $p.SkipCertificateCheck = $true }
         Invoke-RestMethod @p | Out-Null
     } catch { <# ignore logout errors #> }
+}
+
+# Wrapper: sends WebSession cookie + X-XSRF-TOKEN header on every call.
+function Invoke-ECAPI {
+    param(
+        [string]    $Method,
+        [string]    $Uri,
+        [hashtable] $Auth,
+        $Body = $null
+    )
+    $params = @{
+        Method      = $Method
+        Uri         = $Uri
+        ContentType = "application/json"
+        WebSession  = $Auth.Session
+        Headers     = @{ "X-XSRF-TOKEN" = $Auth.CsrfToken }
+        ErrorAction = "Stop"
+    }
+    if ($null -ne $Body) { $params.Body = ($Body | ConvertTo-Json -Depth 5 -Compress) }
+    if (-not $VerifySSL -and $PSVersionTable.PSVersion.Major -ge 6) { $params.SkipCertificateCheck = $true }
+    return Invoke-RestMethod @params
 }
 
 # ---------------------------------------------------------------------------
@@ -138,7 +164,7 @@ function Invoke-RemoveSite {
 
     try {
         Write-Host "  Logging in to $ECHost..." -NoNewline
-        $webSession = Connect-EdgeConnect -Host_ $ECHost -User $Username -Pass $Password
+        $auth = Connect-EdgeConnect -Host_ $ECHost -User $Username -Pass $Password
         Write-Host " OK"
     } catch {
         Write-Err "  $_"
@@ -148,10 +174,10 @@ function Invoke-RemoveSite {
     # Get all existing tunnels: map alias -> tunnel id
     $allTunnels = $null
     try {
-        $allTunnels = Invoke-EC -Method "GET" -Uri "https://$ECHost/rest/json/thirdPartyTunnels/config" -WebSession $webSession
+        $allTunnels = Invoke-ECAPI -Method "GET" -Uri "https://$ECHost/rest/json/thirdPartyTunnels/config" -Auth $auth
     } catch {
         Write-Err "  Could not read tunnel list from $ECHost : $($_.Exception.Message)"
-        Disconnect-EdgeConnect -Host_ $ECHost -WebSession $webSession
+        Disconnect-EdgeConnect -Host_ $ECHost -Auth $auth
         return $false
     }
 
@@ -169,19 +195,18 @@ function Invoke-RemoveSite {
 
     if ($idsToDelete.Count -eq 0) {
         Write-Info "  No tunnels to remove on $ECHost"
-        Disconnect-EdgeConnect -Host_ $ECHost -WebSession $webSession
+        Disconnect-EdgeConnect -Host_ $ECHost -Auth $auth
         return $true
     }
 
     Write-Host "  Removing $($idsToDelete.Count) tunnel(s)..." -NoNewline
     try {
-        Invoke-EC -Method "POST" -Uri "https://$ECHost/rest/json/thirdPartyTunnels/deleteMultiple" `
-            -Body $idsToDelete -WebSession $webSession | Out-Null
+        Invoke-ECAPI -Method "POST" -Uri "https://$ECHost/rest/json/thirdPartyTunnels/deleteMultiple" -Auth $auth -Body $idsToDelete | Out-Null
         Write-Host " OK"
     } catch {
         Write-Host " FAILED"
         Write-Err "  $($_.Exception.Message)"
-        Disconnect-EdgeConnect -Host_ $ECHost -WebSession $webSession
+        Disconnect-EdgeConnect -Host_ $ECHost -Auth $auth
         return $false
     }
 
@@ -189,9 +214,7 @@ function Invoke-RemoveSite {
     $vtiErrors = 0
     $allVtis = $null
     try {
-        $p = @{ Method = "GET"; Uri = "https://$ECHost/rest/json/virtualif/vti"; WebSession = $webSession; ErrorAction = "Stop" }
-        if (-not $VerifySSL -and $PSVersionTable.PSVersion.Major -ge 6) { $p.SkipCertificateCheck = $true }
-        $allVtis = Invoke-RestMethod @p
+        $allVtis = Invoke-ECAPI -Method "GET" -Uri "https://$ECHost/rest/json/virtualif/vti" -Auth $auth
     } catch {
         Write-Warn "  Could not read VTI list: $($_.Exception.Message)"
     }
@@ -208,14 +231,7 @@ function Invoke-RemoveSite {
             $vtiKey = $vtiEntry.Name
             Write-Host "  Removing VTI $vtiKey (tunnel: $name)..." -NoNewline
             try {
-                $p = @{
-                    Method      = "DELETE"
-                    Uri         = "https://$ECHost/rest/json/virtualif/vti/$vtiKey"
-                    WebSession  = $webSession
-                    ErrorAction = "Stop"
-                }
-                if (-not $VerifySSL -and $PSVersionTable.PSVersion.Major -ge 6) { $p.SkipCertificateCheck = $true }
-                Invoke-RestMethod @p | Out-Null
+                Invoke-ECAPI -Method "DELETE" -Uri "https://$ECHost/rest/json/virtualif/vti/$vtiKey" -Auth $auth | Out-Null
                 Write-Host " OK"
             } catch {
                 Write-Host " FAILED"
@@ -225,7 +241,7 @@ function Invoke-RemoveSite {
         }
     }
 
-    Disconnect-EdgeConnect -Host_ $ECHost -WebSession $webSession
+    Disconnect-EdgeConnect -Host_ $ECHost -Auth $auth
     return ($vtiErrors -eq 0)
 }
 

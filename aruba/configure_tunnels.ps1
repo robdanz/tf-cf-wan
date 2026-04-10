@@ -72,36 +72,16 @@ function Write-Info  { param([string]$Msg) Write-Host "INFO  $Msg" }
 function Write-Warn  { param([string]$Msg) Write-Host "WARN  $Msg" -ForegroundColor Yellow }
 function Write-Err   { param([string]$Msg) Write-Host "ERROR $Msg" -ForegroundColor Red }
 
-function Invoke-EC {
-    <# Wrapper around Invoke-RestMethod that carries the session cookie #>
-    param(
-        [string]      $Method,
-        [string]      $Uri,
-        [hashtable]   $Body     = $null,
-        [ref]         $Session  = $null,
-        [bool]        $SkipCert = $false
-    )
-    $params = @{
-        Method      = $Method
-        Uri         = $Uri
-        ContentType = "application/json"
-        ErrorAction = "Stop"
-    }
-    if ($Body)    { $params.Body = ($Body | ConvertTo-Json -Depth 10 -Compress) }
-    if ($Session -and $Session.Value) { $params.WebSession = $Session.Value }
-
-    if ($SkipCert -and $PSVersionTable.PSVersion.Major -ge 6) {
-        $params.SkipCertificateCheck = $true
-    }
-    return Invoke-RestMethod @params
-}
-
 # ---------------------------------------------------------------------------
 # EdgeConnect auth
+#
+# ECOS requires BOTH a session cookie AND an X-XSRF-TOKEN header on every
+# call after login. Connect-EdgeConnect returns a hashtable:
+#   @{ Session = <WebRequestSession>; CsrfToken = <string> }
+# Pass this as $Auth to all subsequent helpers.
 # ---------------------------------------------------------------------------
 function Connect-EdgeConnect {
     param([string]$Host_, [string]$User, [string]$Pass)
-    $session = $null
     $params = @{
         Method          = "POST"
         Uri             = "https://$Host_/rest/json/login"
@@ -118,17 +98,51 @@ function Connect-EdgeConnect {
     } catch {
         throw "Login to $Host_ failed: $_"
     }
-    # $session is set by -SessionVariable
-    return (Get-Variable -Name session -ValueOnly)
+    $session = Get-Variable -Name session -ValueOnly
+    # Extract CSRF token from the edgeosCsrfToken cookie set by login
+    $csrfToken = $session.Cookies.GetCookies("https://$Host_") |
+        Where-Object { $_.Name -eq "edgeosCsrfToken" } |
+        Select-Object -First 1 -ExpandProperty Value
+    if (-not $csrfToken) {
+        throw "Login to $Host_ succeeded but edgeosCsrfToken cookie not found — cannot proceed"
+    }
+    return @{ Session = $session; CsrfToken = $csrfToken }
 }
 
 function Disconnect-EdgeConnect {
-    param([string]$Host_, $WebSession)
+    param([string]$Host_, [hashtable]$Auth)
     try {
-        $p = @{ Method = "DELETE"; Uri = "https://$Host_/rest/json/login"; WebSession = $WebSession; ErrorAction = "SilentlyContinue" }
+        $p = @{
+            Method      = "DELETE"
+            Uri         = "https://$Host_/rest/json/login"
+            WebSession  = $Auth.Session
+            Headers     = @{ "X-XSRF-TOKEN" = $Auth.CsrfToken }
+            ErrorAction = "SilentlyContinue"
+        }
         if (-not $VerifySSL -and $PSVersionTable.PSVersion.Major -ge 6) { $p.SkipCertificateCheck = $true }
         Invoke-RestMethod @p | Out-Null
     } catch { <# ignore logout errors #> }
+}
+
+# Wrapper: sends WebSession cookie + X-XSRF-TOKEN header on every call.
+function Invoke-ECAPI {
+    param(
+        [string]    $Method,
+        [string]    $Uri,
+        [hashtable] $Auth,
+        $Body = $null
+    )
+    $params = @{
+        Method      = $Method
+        Uri         = $Uri
+        ContentType = "application/json"
+        WebSession  = $Auth.Session
+        Headers     = @{ "X-XSRF-TOKEN" = $Auth.CsrfToken }
+        ErrorAction = "Stop"
+    }
+    if ($null -ne $Body) { $params.Body = ($Body | ConvertTo-Json -Depth 10 -Compress) }
+    if (-not $VerifySSL -and $PSVersionTable.PSVersion.Major -ge 6) { $params.SkipCertificateCheck = $true }
+    return Invoke-RestMethod @params
 }
 
 # ---------------------------------------------------------------------------
@@ -193,14 +207,12 @@ function Build-TunnelPayload {
 # Create a VTI on the appliance for one tunnel (idempotent)
 # ---------------------------------------------------------------------------
 function New-VTI {
-    param([string]$ECHost, $Tunnel, $WebSession)
+    param([string]$ECHost, $Tunnel, [hashtable]$Auth)
 
     # GET existing VTIs — check idempotency and find next vtiN number
     $allVtis = $null
     try {
-        $p = @{ Method = "GET"; Uri = "https://$ECHost/rest/json/virtualif/vti"; WebSession = $WebSession; ErrorAction = "Stop" }
-        if (-not $VerifySSL -and $PSVersionTable.PSVersion.Major -ge 6) { $p.SkipCertificateCheck = $true }
-        $allVtis = Invoke-RestMethod @p
+        $allVtis = Invoke-ECAPI -Method "GET" -Uri "https://$ECHost/rest/json/virtualif/vti" -Auth $Auth
     } catch {
         Write-Warn "    Could not read VTI list: $($_.Exception.Message)"
         return $false
@@ -242,16 +254,7 @@ function New-VTI {
     }
 
     try {
-        $p = @{
-            Method      = "POST"
-            Uri         = "https://$ECHost/rest/json/virtualif/vti/$vtiKey"
-            ContentType = "application/json"
-            Body        = ($payload | ConvertTo-Json -Depth 5 -Compress)
-            WebSession  = $WebSession
-            ErrorAction = "Stop"
-        }
-        if (-not $VerifySSL -and $PSVersionTable.PSVersion.Major -ge 6) { $p.SkipCertificateCheck = $true }
-        Invoke-RestMethod @p | Out-Null
+        Invoke-ECAPI -Method "POST" -Uri "https://$ECHost/rest/json/virtualif/vti/$vtiKey" -Auth $Auth -Body $payload | Out-Null
         Write-Info "    VTI OK ($vtiKey)"
         return $true
     } catch {
@@ -280,7 +283,7 @@ function Invoke-ConfigureSite {
 
     try {
         Write-Host "  Logging in to $ECHost..." -NoNewline
-        $webSession = Connect-EdgeConnect -Host_ $ECHost -User $Username -Pass $Password
+        $auth = Connect-EdgeConnect -Host_ $ECHost -User $Username -Pass $Password
         Write-Host " OK"
     } catch {
         Write-Err "  $_"
@@ -290,9 +293,7 @@ function Invoke-ConfigureSite {
     # Get existing tunnel aliases for idempotency
     $existingAliases = @()
     try {
-        $p = @{ Method = "GET"; Uri = "https://$ECHost/rest/json/thirdPartyTunnels/config"; WebSession = $webSession; ErrorAction = "Stop" }
-        if (-not $VerifySSL -and $PSVersionTable.PSVersion.Major -ge 6) { $p.SkipCertificateCheck = $true }
-        $existing = Invoke-RestMethod @p
+        $existing = Invoke-ECAPI -Method "GET" -Uri "https://$ECHost/rest/json/thirdPartyTunnels/config" -Auth $auth
         $existingAliases = $existing.PSObject.Properties.Value | ForEach-Object { $_.alias }
     } catch {
         Write-Warn "  Could not read existing tunnels (will attempt to create anyway)"
@@ -303,25 +304,16 @@ function Invoke-ConfigureSite {
         if ($existingAliases -contains $t.tunnel_name) {
             Write-Info "  SKIP tunnel: '$($t.tunnel_name)' already exists on appliance"
             # Still attempt VTI creation — it may have been missed previously
-            if (-not (New-VTI -ECHost $ECHost -Tunnel $t -WebSession $webSession)) { $errors++ }
+            if (-not (New-VTI -ECHost $ECHost -Tunnel $t -Auth $auth)) { $errors++ }
             continue
         }
 
         $payload = Build-TunnelPayload -Tunnel $t -PSK $script:PSK
         Write-Host "  Creating $($t.tunnel_name)..." -NoNewline
         try {
-            $p = @{
-                Method      = "POST"
-                Uri         = "https://$ECHost/rest/json/thirdPartyTunnels/config"
-                ContentType = "application/json"
-                Body        = ($payload | ConvertTo-Json -Depth 10 -Compress)
-                WebSession  = $webSession
-                ErrorAction = "Stop"
-            }
-            if (-not $VerifySSL -and $PSVersionTable.PSVersion.Major -ge 6) { $p.SkipCertificateCheck = $true }
-            Invoke-RestMethod @p | Out-Null
+            Invoke-ECAPI -Method "POST" -Uri "https://$ECHost/rest/json/thirdPartyTunnels/config" -Auth $auth -Body $payload | Out-Null
             Write-Host " OK"
-            if (-not (New-VTI -ECHost $ECHost -Tunnel $t -WebSession $webSession)) { $errors++ }
+            if (-not (New-VTI -ECHost $ECHost -Tunnel $t -Auth $auth)) { $errors++ }
         } catch {
             Write-Host " FAILED"
             Write-Err "  $($_.Exception.Message)"
@@ -329,7 +321,7 @@ function Invoke-ConfigureSite {
         }
     }
 
-    Disconnect-EdgeConnect -Host_ $ECHost -WebSession $webSession
+    Disconnect-EdgeConnect -Host_ $ECHost -Auth $auth
     return ($errors -eq 0)
 }
 
