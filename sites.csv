@@ -1,5 +1,0 @@
-site_name,site_index,customer_gw_ip,lan_subnets
-test-hq,0,203.0.113.1,"10.201.0.0/20,192.168.188.0/22"
-test-branch01,1,198.51.100.10,
-test-branch02,2,198.51.100.20,
-test-nat-site,3,,

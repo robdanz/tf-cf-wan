@@ -20,13 +20,14 @@ resource "cloudflare_magic_wan_ipsec_tunnel" "tunnels" {
   customer_endpoint   = each.value.customer_gw_ip != "" ? each.value.customer_gw_ip : null
   interface_address   = local.tunnel_ips[each.key].interface_cidr
   psk                 = random_password.tunnel_psk.result
-  replay_protection   = var.replay_protection
+  replay_protection          = var.replay_protection
+  automatic_return_routing   = true
 
   health_check = {
     enabled   = var.health_check_enabled
     type      = var.health_check_type
     direction = var.health_check_direction
     rate      = var.health_check_rate
-    target    = { saved = each.value.customer_gw_ip != "" ? each.value.customer_gw_ip : local.tunnel_ips[each.key].cpe_ip }
+    target    = { saved = "" }
   }
 }

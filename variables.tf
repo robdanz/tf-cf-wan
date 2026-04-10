@@ -50,7 +50,7 @@ variable "health_check_enabled" {
 variable "health_check_type" {
   description = "Health check type: reply (ICMP reply) or request (ICMP echo request)"
   type        = string
-  default     = "reply"
+  default     = "request"
 
   validation {
     condition     = contains(["reply", "request"], var.health_check_type)
@@ -61,7 +61,7 @@ variable "health_check_type" {
 variable "health_check_direction" {
   description = "Health check direction: unidirectional or bidirectional"
   type        = string
-  default     = "unidirectional"
+  default     = "bidirectional"
 
   validation {
     condition     = contains(["unidirectional", "bidirectional"], var.health_check_direction)

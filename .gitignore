@@ -12,8 +12,30 @@ terraform.tfvars
 # Output (contains PSK)
 output/
 
+# Site data — contains internal IPs and topology
+sites.csv
+sites.csv.proposed
+aruba/.venv/
+aruba/tunnel-params.yaml
+
+# Aruba scratch / test scripts (not needed for deployment)
+aruba/out
+aruba/vti-api-info
+aruba/get-sample.sh
+aruba/get-vti.sh
+aruba/delete-vti.sh
+aruba/test-vti-create.sh
+
+# Private / local working files
+private/
+memory/
+.session
+INSTRUCTIONS.md
+Demo Workflow.md
+
 # Local
 .DS_Store
+.env
 AI-SETUP-INSTRUCTIONS.md
 .claude/
 
