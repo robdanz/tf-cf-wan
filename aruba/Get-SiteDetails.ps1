@@ -295,6 +295,14 @@ try {
     exit 1
 }
 
+# Orchestrator may return a top-level object wrapping the array (e.g. {appliances:[...]})
+# or a plain JSON array. Unwrap if needed.
+if ($applianceList -isnot [System.Array] -and $applianceList.PSObject.Properties.Count -eq 1) {
+    $innerKey = $applianceList.PSObject.Properties.Name | Select-Object -First 1
+    Write-Info "Unwrapping appliance list from key '$innerKey'"
+    $applianceList = @($applianceList.$innerKey)
+}
+
 $totalCount = @($applianceList).Count
 Write-Info "Found $totalCount appliance(s)"
 
@@ -302,6 +310,19 @@ if ($totalCount -eq 0) {
     Write-Host "ERROR: No appliances returned from Orchestrator." -ForegroundColor Red
     exit 1
 }
+
+# Detect field name for appliance ID — different Orchestrator versions use 'id' or 'nePk'
+$firstAppliance = @($applianceList)[0]
+$idField = $null
+foreach ($candidate in @("id", "nePk", "nepk")) {
+    if ($firstAppliance.PSObject.Properties[$candidate]) { $idField = $candidate; break }
+}
+if (-not $idField) {
+    Write-Host "ERROR: Cannot determine appliance ID field. Available properties:" -ForegroundColor Red
+    $firstAppliance.PSObject.Properties.Name | ForEach-Object { Write-Host "  $_" }
+    exit 1
+}
+Write-Info "Using appliance ID field: '$idField'"
 
 # Parse -Sites filter
 $siteFilter = @()
@@ -312,9 +333,9 @@ if ($Sites) {
 # Process appliances
 $results = @()
 foreach ($appliance in $applianceList) {
-    $nePk     = $appliance.id
-    $hostname = $appliance.hostName
-    $mgmtIP   = $appliance.IP
+    $nePk     = $appliance.$idField
+    $hostname = if ($appliance.PSObject.Properties["hostName"]) { $appliance.hostName } else { $appliance.hostname }
+    $mgmtIP   = if ($appliance.PSObject.Properties["IP"]) { $appliance.IP } else { "" }
 
     # Apply hostname filter if specified
     if ($siteFilter.Count -gt 0) {
