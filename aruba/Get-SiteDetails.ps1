@@ -298,7 +298,10 @@ function Get-ApplianceDetails {
 # PSCustomObject (not an array) when the JSON contains exactly one element.
 Write-Info "Fetching appliance list from $Orchestrator..."
 try {
-    $applianceList = @(Invoke-OrchAPI "appliance")
+    $raw = Invoke-OrchAPI "appliance"
+    # ConvertFrom-Json returns Object[] for multi-element arrays but a single PSCustomObject
+    # for one-element arrays. Normalize: if already an array use it; otherwise wrap.
+    $applianceList = if ($raw -is [System.Array]) { $raw } else { @($raw) }
 } catch {
     Write-Host "ERROR: Could not reach Orchestrator at $Orchestrator`: $_" -ForegroundColor Red
     exit 1
