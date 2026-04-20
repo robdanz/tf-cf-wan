@@ -405,6 +405,16 @@ function Invoke-ConfigureSite {
                     )
                 } | Select-Object -First 1
                 if ($match) { $nePk = $match.$idField }
+                if (-not $nePk) {
+                    Write-Warn "  Could not match appliance. ec_hostname=$ECHost  site_name=$SiteName"
+                    Write-Warn "  Orchestrator returned $($appliances.Count) appliance(s):"
+                    foreach ($a in $appliances) {
+                        $aId   = if ($idField -and $a.PSObject.Properties[$idField]) { $a.$idField } else { "?" }
+                        $aHost = if ($a.PSObject.Properties["hostName"]) { $a.hostName } else { "?" }
+                        $aIP   = if ($a.PSObject.Properties["IP"]) { $a.IP } else { "?" }
+                        Write-Warn "    id=$aId  hostName=$aHost  IP=$aIP"
+                    }
+                }
             } catch {
                 Write-Warn "  Could not query Orchestrator appliance list: $_"
             }
@@ -416,7 +426,7 @@ function Invoke-ConfigureSite {
                     Write-Warn "  NAT site: could not resolve WAN IP - will use 0.0.0.0 (may fail)"
                 }
             } else {
-                Write-Warn "  NAT site: appliance $ECHost not found in Orchestrator - will use 0.0.0.0"
+                Write-Warn "  NAT site: appliance not matched in Orchestrator - will use 0.0.0.0"
             }
         } else {
             Write-Warn "  NAT site: -Orchestrator not provided - will use source=0.0.0.0 (may fail on some ECOS versions)"
