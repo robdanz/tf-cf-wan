@@ -438,7 +438,9 @@ foreach ($r in $sorted) {
     $idx++
 }
 
-$csvLines | Set-Content -Path $OutputFile -Encoding UTF8
+# PS5.1 Set-Content -Encoding UTF8 writes a BOM, which breaks Terraform's csvdecode.
+# Use .NET directly to write UTF-8 without BOM.
+[System.IO.File]::WriteAllLines($OutputFile, $csvLines, [System.Text.UTF8Encoding]::new($false))
 
 Write-Host ""
 Write-Info "Written to: $OutputFile"
