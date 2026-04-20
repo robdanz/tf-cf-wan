@@ -18,6 +18,13 @@
 .PARAMETER DryRun
     Print planned changes without making any API calls.
 
+.PARAMETER Orchestrator
+    Orchestrator hostname or IP. Required for NAT'd/dynamic sites (blank customer_gw_ip)
+    to resolve the appliance's current WAN IP at run time.
+
+.PARAMETER OrchToken
+    Orchestrator API token. If omitted, reads from $env:ARUBA_API_TOKEN.
+
 .PARAMETER VerifySSL
     Enforce TLS certificate verification. Default: skip verification (required for IP-based access with self-signed certs).
 
@@ -25,6 +32,7 @@
     .\configure_tunnels.ps1 -DryRun
     .\configure_tunnels.ps1 -Sites "test-hq,test-branch01"
     .\configure_tunnels.ps1 -Username admin -VerifySSL   # only if appliance has a valid cert
+    .\configure_tunnels.ps1 -Orchestrator 10.0.0.100     # required for NAT'd sites
 
 .NOTES
     Requires: PowerShell 5.1+, terraform in PATH
@@ -34,6 +42,8 @@ param(
     [string]   $Username     = "admin",
     [string]   $Password     = "",
     [string]   $Sites        = "",
+    [string]   $Orchestrator = "",
+    [string]   $OrchToken    = $env:ARUBA_API_TOKEN,
     [switch]   $DryRun,
     [switch]   $VerifySSL
 )
@@ -142,22 +152,64 @@ function Invoke-ECAPI {
     }
     # Use -InputObject (not pipeline) to preserve array type - piping unwraps single-element arrays
     if ($null -ne $Body) { $params.Body = (ConvertTo-Json -InputObject $Body -Depth 10 -Compress) }
+    # Use Invoke-WebRequest (not Invoke-RestMethod): on non-2xx, Invoke-RestMethod consumes the
+    # response stream before throwing, making the body unreadable in the catch block.
+    # Invoke-WebRequest leaves the stream open so we can extract the actual API error message.
+    $params.UseBasicParsing = $true
     if (-not $VerifySSL -and $PSVersionTable.PSVersion.Major -ge 6) { $params.SkipCertificateCheck = $true }
     try {
-        return Invoke-RestMethod @params
-    } catch {
-        # PS5.1 Invoke-RestMethod throws on non-2xx but swallows the response body.
-        # Extract it from the exception so callers can see the actual API error message.
-        $respBody = ""
+        $resp = Invoke-WebRequest @params
+        if ($resp.Content) { return $resp.Content | ConvertFrom-Json }
+        return $null
+    } catch [System.Net.WebException] {
+        $body = ""
         try {
             $stream = $_.Exception.Response.GetResponseStream()
             $reader = New-Object System.IO.StreamReader($stream)
-            $respBody = $reader.ReadToEnd()
+            $body = $reader.ReadToEnd()
         } catch {}
-        $msg = "$($_.Exception.Message)"
-        if ($respBody) { $msg += " -- $respBody" }
-        throw $msg
+        $status = [int]$_.Exception.Response.StatusCode
+        throw "HTTP $status$(if ($body) { " -- $body" })"
+    } catch {
+        throw $_.Exception.Message
     }
+}
+
+# ---------------------------------------------------------------------------
+# Resolve appliance WAN IP from Orchestrator (for NAT'd/dynamic sites)
+# Returns the first public IP found, or "" if unavailable.
+# ---------------------------------------------------------------------------
+function Get-WanIP {
+    param([string]$NePk)
+    if (-not $Orchestrator -or -not $OrchToken) { return "" }
+    try {
+        $params = @{
+            Method          = "GET"
+            Uri             = "https://$Orchestrator/gms/rest/interfaceState?nePk=$NePk&cached=true"
+            Headers         = @{ "X-Auth-Token" = $OrchToken; "Accept" = "application/json" }
+            UseBasicParsing = $true
+            ErrorAction     = "Stop"
+        }
+        if (-not $VerifySSL -and $PSVersionTable.PSVersion.Major -ge 6) { $params.SkipCertificateCheck = $true }
+        $resp   = Invoke-WebRequest @params
+        $ifaces = @(($resp.Content | ConvertFrom-Json).ifInfo)
+        # Prefer explicit publicIp on any WAN interface
+        foreach ($iface in ($ifaces | Where-Object { $_.ifname -like "wan*" -and $_.oper -eq $true })) {
+            if ($iface.PSObject.Properties["publicIp"] -and $iface.publicIp -and $iface.publicIp -ne "0.0.0.0") {
+                return $iface.publicIp
+            }
+        }
+        # Fall back to non-RFC1918 interface IP
+        foreach ($iface in ($ifaces | Where-Object { $_.ifname -like "wan*" -and $_.oper -eq $true -and $_.ipv4 -and $_.ipv4 -ne "0.0.0.0" })) {
+            $ip = $iface.ipv4
+            if ($ip -notmatch '^10\.' -and $ip -notmatch '^172\.(1[6-9]|2[0-9]|3[01])\.' -and $ip -notmatch '^192\.168\.') {
+                return $ip
+            }
+        }
+    } catch {
+        Write-Warn "    Could not resolve WAN IP from Orchestrator: $_"
+    }
+    return ""
 }
 
 # ---------------------------------------------------------------------------
@@ -169,7 +221,10 @@ function Invoke-ECAPI {
 # Local identity: FQDN (fqdn_id from terraform output)
 # ---------------------------------------------------------------------------
 function Build-TunnelPayload {
-    param($Tunnel, [string]$PSK)
+    param($Tunnel, [string]$PSK, [string]$SourceIP = "")
+    $source = if ($SourceIP) { $SourceIP }
+              elseif ($Tunnel.customer_endpoint) { $Tunnel.customer_endpoint }
+              else { "0.0.0.0" }
     return @{
         $Tunnel.tunnel_name = @{
             admin        = "up"
@@ -182,7 +237,7 @@ function Build-TunnelPayload {
             mode         = "ipsec_ip"
             nat_mode     = "none"
             peername     = "Cloudflare_IPSec"
-            source       = if ($Tunnel.customer_endpoint) { $Tunnel.customer_endpoint } else { "0.0.0.0" }
+            source       = $source
             destination  = $Tunnel.cloudflare_endpoint
             max_bw_auto  = $true
             local_vrf    = 0
@@ -311,6 +366,50 @@ function Invoke-ConfigureSite {
         Write-Warn "  Could not read existing tunnels (will attempt to create anyway)"
     }
 
+    # For NAT'd/dynamic sites (no customer_endpoint), resolve the live WAN IP from Orchestrator.
+    # All tunnels on the same appliance share the same source IP.
+    $resolvedSourceIP = ""
+    $isNatSite = -not $SiteTunnels[0].customer_endpoint
+    if ($isNatSite) {
+        if ($Orchestrator) {
+            # Get the nePk for this appliance from the Orchestrator appliance list
+            $nePk = ""
+            try {
+                $orchParams = @{
+                    Method          = "GET"
+                    Uri             = "https://$Orchestrator/gms/rest/appliance"
+                    Headers         = @{ "X-Auth-Token" = $OrchToken; "Accept" = "application/json" }
+                    UseBasicParsing = $true
+                    ErrorAction     = "Stop"
+                }
+                if (-not $VerifySSL -and $PSVersionTable.PSVersion.Major -ge 6) { $orchParams.SkipCertificateCheck = $true }
+                $orchResp   = Invoke-WebRequest @orchParams
+                $json       = $orchResp.Content -replace '"ip"(\s*:)', '"_ip_lc"$1'
+                $appliances = @($json | ConvertFrom-Json)
+                $idField    = @("id","nePk","nepk") | Where-Object { $appliances[0].PSObject.Properties[$_] } | Select-Object -First 1
+                $match      = $appliances | Where-Object { $_.$idField -and (
+                    ($_.PSObject.Properties["IP"]   -and $_.IP       -eq $ECHost) -or
+                    ($_.PSObject.Properties["hostName"] -and $_.hostName -eq $ECHost)
+                )} | Select-Object -First 1
+                if ($match) { $nePk = $match.$idField }
+            } catch {
+                Write-Warn "  Could not query Orchestrator appliance list: $_"
+            }
+            if ($nePk) {
+                $resolvedSourceIP = Get-WanIP -NePk $nePk
+                if ($resolvedSourceIP) {
+                    Write-Info "  NAT site: resolved WAN IP $resolvedSourceIP from Orchestrator"
+                } else {
+                    Write-Warn "  NAT site: could not resolve WAN IP - will use 0.0.0.0 (may fail)"
+                }
+            } else {
+                Write-Warn "  NAT site: appliance $ECHost not found in Orchestrator - will use 0.0.0.0"
+            }
+        } else {
+            Write-Warn "  NAT site: -Orchestrator not provided - will use source=0.0.0.0 (may fail on some ECOS versions)"
+        }
+    }
+
     $errors = 0
     foreach ($t in $SiteTunnels) {
         if ($existingAliases -contains $t.tunnel_name) {
@@ -320,7 +419,7 @@ function Invoke-ConfigureSite {
             continue
         }
 
-        $payload = Build-TunnelPayload -Tunnel $t -PSK $script:PSK
+        $payload = Build-TunnelPayload -Tunnel $t -PSK $script:PSK -SourceIP $resolvedSourceIP
         Write-Host "  Creating $($t.tunnel_name)..." -NoNewline
         try {
             Invoke-ECAPI -Method "POST" -Uri "https://$ECHost/rest/json/thirdPartyTunnels/config" -Auth $auth -Body $payload | Out-Null
