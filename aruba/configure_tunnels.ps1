@@ -143,7 +143,21 @@ function Invoke-ECAPI {
     # Use -InputObject (not pipeline) to preserve array type - piping unwraps single-element arrays
     if ($null -ne $Body) { $params.Body = (ConvertTo-Json -InputObject $Body -Depth 10 -Compress) }
     if (-not $VerifySSL -and $PSVersionTable.PSVersion.Major -ge 6) { $params.SkipCertificateCheck = $true }
-    return Invoke-RestMethod @params
+    try {
+        return Invoke-RestMethod @params
+    } catch {
+        # PS5.1 Invoke-RestMethod throws on non-2xx but swallows the response body.
+        # Extract it from the exception so callers can see the actual API error message.
+        $respBody = ""
+        try {
+            $stream = $_.Exception.Response.GetResponseStream()
+            $reader = New-Object System.IO.StreamReader($stream)
+            $respBody = $reader.ReadToEnd()
+        } catch {}
+        $msg = "$($_.Exception.Message)"
+        if ($respBody) { $msg += " -- $respBody" }
+        throw $msg
+    }
 }
 
 # ---------------------------------------------------------------------------
