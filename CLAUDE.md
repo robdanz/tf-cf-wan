@@ -155,6 +155,7 @@ export ARUBA_API_TOKEN="your-token-here"
 | Script | Platform | Purpose |
 |---|---|---|
 | `aruba/get_site_details.sh` | Linux/Mac | Query Orchestrator → extended site data + `sites.csv.proposed` |
+| `aruba/Get-SiteDetails.ps1` | Windows/PS | Windows: Query Orchestrator → extended site data + `sites.csv.proposed` |
 | `aruba/demo_orchestrator.sh` | Linux/Mac | Simulate Orchestrator query (10 NAT'd sites) → `sites.csv.proposed` |
 | `aruba/configure-tunnels.tftpl` | — | Terraform template rendered to `output/configure-tunnels.sh` on apply |
 | `aruba/remove-tunnels.tftpl` | — | Terraform template rendered to `output/remove-tunnels.sh` on apply |

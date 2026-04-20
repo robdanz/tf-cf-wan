@@ -324,7 +324,24 @@ tunnel_supernet = "10.120.0.0/22"
 
 ### Step 2 — Prepare sites.csv
 
-Create `sites.csv` in the repo root manually (Orchestrator discovery requires bash — use a Mac/Linux machine or WSL if available):
+#### Option A — Generate from Aruba Orchestrator (recommended)
+
+```powershell
+# Set your Orchestrator API token (read-only access is sufficient):
+$env:ARUBA_API_TOKEN = "your-orchestrator-token"
+
+# Run discovery — writes sites.csv.proposed to the repo root:
+.\aruba\Get-SiteDetails.ps1 -Orchestrator 10.0.0.100
+```
+
+Review the output, then accept:
+
+```powershell
+notepad sites.csv.proposed    # review
+Copy-Item sites.csv.proposed sites.csv
+```
+
+#### Option B — Create sites.csv manually
 
 ```csv
 site_name,site_index,customer_gw_ip,ec_hostname
