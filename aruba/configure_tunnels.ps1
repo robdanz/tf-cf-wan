@@ -161,17 +161,22 @@ function Invoke-ECAPI {
         $resp = Invoke-WebRequest @params
         if ($resp.Content) { return $resp.Content | ConvertFrom-Json }
         return $null
-    } catch [System.Net.WebException] {
-        $body = ""
-        try {
-            $stream = $_.Exception.Response.GetResponseStream()
-            $reader = New-Object System.IO.StreamReader($stream)
-            $body = $reader.ReadToEnd()
-        } catch {}
-        $status = [int]$_.Exception.Response.StatusCode
-        throw "HTTP $status$(if ($body) { " -- $body" })"
     } catch {
-        throw $_.Exception.Message
+        # Try multiple ways to get the response body - PS5.1 stream handling is unreliable
+        $body = ""
+        if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
+            $body = $_.ErrorDetails.Message
+        }
+        if (-not $body -and $_.Exception.Response) {
+            try {
+                $stream = $_.Exception.Response.GetResponseStream()
+                $reader = New-Object System.IO.StreamReader($stream)
+                $body = $reader.ReadToEnd()
+            } catch {}
+        }
+        $status = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { 0 }
+        $prefix = if ($status) { "HTTP $status" } else { $_.Exception.Message }
+        throw "$prefix$(if ($body) { " -- $body" })"
     }
 }
 
@@ -387,10 +392,18 @@ function Invoke-ConfigureSite {
                 $json       = $orchResp.Content -replace '"ip"(\s*:)', '"_ip_lc"$1'
                 $appliances = @($json | ConvertFrom-Json)
                 $idField    = @("id","nePk","nepk") | Where-Object { $appliances[0].PSObject.Properties[$_] } | Select-Object -First 1
-                $match      = $appliances | Where-Object { $_.$idField -and (
-                    ($_.PSObject.Properties["IP"]   -and $_.IP       -eq $ECHost) -or
-                    ($_.PSObject.Properties["hostName"] -and $_.hostName -eq $ECHost)
-                )} | Select-Object -First 1
+                # Match by IP first; fall back to normalized hostname == site_name.
+                # The Orchestrator's .IP field tracks its own management channel to the
+                # appliance, which may differ from ec_hostname (mgmt0 IP for EC-V).
+                $match = $appliances | Where-Object {
+                    $_.$idField -and (
+                        ($_.PSObject.Properties["IP"] -and $_.IP -eq $ECHost) -or
+                        ($_.PSObject.Properties["hostName"] -and (
+                            ($_.hostName -eq $ECHost) -or
+                            (($_.hostName.ToLower() -replace '[^a-z0-9]+','-').Trim('-') -eq $SiteName)
+                        ))
+                    )
+                } | Select-Object -First 1
                 if ($match) { $nePk = $match.$idField }
             } catch {
                 Write-Warn "  Could not query Orchestrator appliance list: $_"
