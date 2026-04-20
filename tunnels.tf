@@ -28,6 +28,6 @@ resource "cloudflare_magic_wan_ipsec_tunnel" "tunnels" {
     type      = var.health_check_type
     direction = var.health_check_direction
     rate      = var.health_check_rate
-    target    = { saved = "" }
+    target    = { saved = local.tunnel_ips[each.key].cpe_ip }
   }
 }
