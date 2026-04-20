@@ -108,7 +108,11 @@ function Invoke-OrchAPI {
     if (-not $VerifySSL -and $PSVersionTable.PSVersion.Major -ge 6) {
         $params.SkipCertificateCheck = $true
     }
-    return Invoke-RestMethod @params
+    # Use Invoke-WebRequest + ConvertFrom-Json so JSON is always parsed regardless
+    # of whether the server returns Content-Type: application/json (PS5.1 Invoke-RestMethod
+    # skips parsing when the content-type header is absent or non-JSON).
+    $response = Invoke-WebRequest @params
+    return $response.Content | ConvertFrom-Json
 }
 
 # Returns $true if the IP is a routable public address (not RFC1918, not link-local, not empty)
@@ -286,23 +290,17 @@ function Get-ApplianceDetails {
 # ---------------------------------------------------------------------------
 
 # Fetch appliance list
+# @() ensures the result is always an array — PS5.1 ConvertFrom-Json returns a single
+# PSCustomObject (not an array) when the JSON contains exactly one element.
 Write-Info "Fetching appliance list from $Orchestrator..."
 try {
-    $applianceList = Invoke-OrchAPI "appliance"
+    $applianceList = @(Invoke-OrchAPI "appliance")
 } catch {
     Write-Host "ERROR: Could not reach Orchestrator at $Orchestrator`: $_" -ForegroundColor Red
     exit 1
 }
 
-# Orchestrator may return a top-level object wrapping the array (e.g. {appliances:[...]})
-# or a plain JSON array. Unwrap if needed.
-if ($applianceList -isnot [System.Array] -and $applianceList.PSObject.Properties.Count -eq 1) {
-    $innerKey = $applianceList.PSObject.Properties.Name | Select-Object -First 1
-    Write-Info "Unwrapping appliance list from key '$innerKey'"
-    $applianceList = @($applianceList.$innerKey)
-}
-
-$totalCount = @($applianceList).Count
+$totalCount = $applianceList.Count
 Write-Info "Found $totalCount appliance(s)"
 
 if ($totalCount -eq 0) {
@@ -311,10 +309,10 @@ if ($totalCount -eq 0) {
 }
 
 # Detect field name for appliance ID — different Orchestrator versions use 'id' or 'nePk'
-$firstAppliance = @($applianceList)[0]
+$firstAppliance = $applianceList[0]
 $idField = $null
 foreach ($candidate in @("id", "nePk", "nepk")) {
-    if ($firstAppliance.PSObject.Properties[$candidate]) { $idField = $candidate; break }
+    if ($null -ne $firstAppliance.PSObject.Properties[$candidate]) { $idField = $candidate; break }
 }
 if (-not $idField) {
     Write-Host "ERROR: Cannot determine appliance ID field. Available properties:" -ForegroundColor Red
