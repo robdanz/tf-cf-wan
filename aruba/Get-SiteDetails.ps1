@@ -53,7 +53,6 @@ param(
     [switch] $VerifySSL
 )
 
-Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -151,7 +150,7 @@ function Get-ApplianceDetails {
 
     try {
         $ifaceResp = Invoke-OrchAPI "interfaceState?nePk=$NePk&cached=true"
-        $ifInfo    = $ifaceResp.ifInfo
+        $ifInfo    = @($ifaceResp.ifInfo)
 
         # WAN interfaces: oper=true, ifname starts with "wan", has a real IPv4
         $wanIfs = $ifInfo | Where-Object {
@@ -230,7 +229,7 @@ function Get-ApplianceDetails {
 
     try {
         $subnetResp = Invoke-OrchAPI "subnets?nePk=$NePk"
-        $entries    = $subnetResp.subnets.entries
+        $entries    = @($subnetResp.subnets.entries)
 
         foreach ($entry in $entries) {
             $s = $entry.state
@@ -274,11 +273,11 @@ function Get-ApplianceDetails {
         Mgmt0IP           = $mgmt0IP
         ApiTarget         = $apiTarget
         CustomerGwIP      = $customerGwIP
-        WanInterfaces     = $wanInterfaces
-        LanInterfaces     = $lanInterfaces
-        AdvertisedSubnets = $advertisedSubnets
-        BgpLearnedRoutes  = $bgpLearnedRoutes
-        OspfLearnedRoutes = $ospfLearnedRoutes
+        WanInterfaces     = @($wanInterfaces)
+        LanInterfaces     = @($lanInterfaces)
+        AdvertisedSubnets = @($advertisedSubnets)
+        BgpLearnedRoutes  = @($bgpLearnedRoutes)
+        OspfLearnedRoutes = @($ospfLearnedRoutes)
     }
 }
 
