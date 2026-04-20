@@ -108,11 +108,15 @@ function Invoke-OrchAPI {
     if (-not $VerifySSL -and $PSVersionTable.PSVersion.Major -ge 6) {
         $params.SkipCertificateCheck = $true
     }
-    # Use Invoke-WebRequest + ConvertFrom-Json so JSON is always parsed regardless
-    # of whether the server returns Content-Type: application/json (PS5.1 Invoke-RestMethod
-    # skips parsing when the content-type header is absent or non-JSON).
-    $response = Invoke-WebRequest @params
-    return $response.Content | ConvertFrom-Json
+    # -UseBasicParsing: skip IE engine (avoids interactive prompt on PS5.1).
+    # Explicit ConvertFrom-Json: PS5.1 Invoke-RestMethod skips JSON parsing when
+    # the server omits Content-Type: application/json.
+    # Rename "ip": -> "_ip_lc": before parsing: the Orchestrator returns both "IP"
+    # and "ip" (same value); PS5.1 ConvertFrom-Json is case-insensitive and throws
+    # on duplicate keys. The lowercase copy is unused — renaming it sidesteps the error.
+    $response = Invoke-WebRequest -UseBasicParsing @params
+    $json = $response.Content -replace '"ip"(\s*:)', '"_ip_lc"$1'
+    return $json | ConvertFrom-Json
 }
 
 # Returns $true if the IP is a routable public address (not RFC1918, not link-local, not empty)
