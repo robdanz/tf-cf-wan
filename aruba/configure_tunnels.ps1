@@ -38,7 +38,6 @@ param(
     [switch]   $VerifySSL
 )
 
-Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -244,9 +243,10 @@ function New-VTI {
     }
 
     # Check if a VTI already exists for this tunnel
-    $existingKey = $allVtis.PSObject.Properties |
+    $existingProp = $allVtis.PSObject.Properties |
         Where-Object { $_.Value.tunnel -eq $Tunnel.tunnel_name } |
-        Select-Object -First 1 -ExpandProperty Name
+        Select-Object -First 1
+    $existingKey = if ($existingProp) { $existingProp.Name } else { $null }
     if ($existingKey) {
         Write-Info "    VTI SKIP: already exists ($existingKey)"
         return $true
