@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     Backout script for configure_tunnels.ps1. Reads the same terraform output to
-    identify which tunnels to remove. No separate state required — tunnel names
+    identify which tunnels to remove. No separate state required - tunnel names
     are deterministic ({site_name}-pri and {site_name}-sec).
 
 .PARAMETER Username
@@ -102,7 +102,7 @@ function Connect-EdgeConnect {
         Where-Object { $_.Name -eq "edgeosCsrfToken" } |
         Select-Object -First 1 -ExpandProperty Value
     if (-not $csrfToken) {
-        throw "Login to $Host_ succeeded but edgeosCsrfToken cookie not found — cannot proceed"
+        throw "Login to $Host_ succeeded but edgeosCsrfToken cookie not found - cannot proceed"
     }
     return @{ Session = $session; CsrfToken = $csrfToken }
 }
@@ -138,7 +138,7 @@ function Invoke-ECAPI {
         Headers     = @{ "X-XSRF-TOKEN" = $Auth.CsrfToken }
         ErrorAction = "Stop"
     }
-    # Use -InputObject (not pipeline) to preserve array type — piping unwraps single-element arrays
+    # Use -InputObject (not pipeline) to preserve array type - piping unwraps single-element arrays
     if ($null -ne $Body) { $params.Body = (ConvertTo-Json -InputObject $Body -Depth 10 -Compress) }
     if (-not $VerifySSL -and $PSVersionTable.PSVersion.Major -ge 6) { $params.SkipCertificateCheck = $true }
     return Invoke-RestMethod @params
@@ -187,10 +187,10 @@ function Invoke-RemoveSite {
     foreach ($name in $expectedNames) {
         $match = $allTunnels.PSObject.Properties | Where-Object { $_.Value.alias -eq $name }
         if ($match) {
-            Write-Info "  Found '$name' as $($match.Name) — queued for deletion"
+            Write-Info "  Found '$name' as $($match.Name) - queued for deletion"
             $idsToDelete += $match.Name
         } else {
-            Write-Warn "  Tunnel '$name' not found on appliance — skipping"
+            Write-Warn "  Tunnel '$name' not found on appliance - skipping"
         }
     }
 
@@ -226,7 +226,7 @@ function Invoke-RemoveSite {
                 Where-Object { $_.Value.tunnel -eq $name } |
                 Select-Object -First 1
             if (-not $vtiEntry) {
-                Write-Info "  No VTI found for '$name' — skipping"
+                Write-Info "  No VTI found for '$name' - skipping"
                 continue
             }
             $vtiKey = $vtiEntry.Name

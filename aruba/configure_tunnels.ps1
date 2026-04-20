@@ -104,7 +104,7 @@ function Connect-EdgeConnect {
         Where-Object { $_.Name -eq "edgeosCsrfToken" } |
         Select-Object -First 1 -ExpandProperty Value
     if (-not $csrfToken) {
-        throw "Login to $Host_ succeeded but edgeosCsrfToken cookie not found — cannot proceed"
+        throw "Login to $Host_ succeeded but edgeosCsrfToken cookie not found - cannot proceed"
     }
     return @{ Session = $session; CsrfToken = $csrfToken }
 }
@@ -140,7 +140,7 @@ function Invoke-ECAPI {
         Headers     = @{ "X-XSRF-TOKEN" = $Auth.CsrfToken }
         ErrorAction = "Stop"
     }
-    # Use -InputObject (not pipeline) to preserve array type — piping unwraps single-element arrays
+    # Use -InputObject (not pipeline) to preserve array type - piping unwraps single-element arrays
     if ($null -ne $Body) { $params.Body = (ConvertTo-Json -InputObject $Body -Depth 10 -Compress) }
     if (-not $VerifySSL -and $PSVersionTable.PSVersion.Major -ge 6) { $params.SkipCertificateCheck = $true }
     return Invoke-RestMethod @params
@@ -151,7 +151,7 @@ function Invoke-ECAPI {
 #
 # Phase 1 (IKE):  AES-256, SHA-256, DH Group 14, IKEv2, aggressive mode
 # Phase 2 (ESP):  AES-256 + AH SHA-256, PFS Group 14
-# Mode:           ipsec_ip (passthrough IPsec — confirmed working on ECOS)
+# Mode:           ipsec_ip (passthrough IPsec - confirmed working on ECOS)
 # Local identity: FQDN (fqdn_id from terraform output)
 # ---------------------------------------------------------------------------
 function Build-TunnelPayload {
@@ -207,7 +207,7 @@ function Build-TunnelPayload {
 function New-VTI {
     param([string]$ECHost, $Tunnel, [hashtable]$Auth)
 
-    # GET existing VTIs — check idempotency and find next vtiN number
+    # GET existing VTIs - check idempotency and find next vtiN number
     $allVtis = $null
     try {
         $allVtis = Invoke-ECAPI -Method "GET" -Uri "https://$ECHost/rest/json/virtualif/vti" -Auth $Auth
@@ -301,7 +301,7 @@ function Invoke-ConfigureSite {
     foreach ($t in $SiteTunnels) {
         if ($existingAliases -contains $t.tunnel_name) {
             Write-Info "  SKIP tunnel: '$($t.tunnel_name)' already exists on appliance"
-            # Still attempt VTI creation — it may have been missed previously
+            # Still attempt VTI creation - it may have been missed previously
             if (-not (New-VTI -ECHost $ECHost -Tunnel $t -Auth $auth)) { $errors++ }
             continue
         }
