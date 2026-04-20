@@ -543,7 +543,7 @@ Transient Cloudflare-side glitch. Re-run `terraform apply -parallelism=1` — it
 Happens when replacing all sites with a completely new `sites.csv`. Run `terraform destroy -parallelism=1` first, then `terraform apply -parallelism=1`. Terraform would otherwise try to create new tunnels before deleting old ones, and Cloudflare rejects duplicate inside addresses.
 
 **NAT'd sites fail with "source IP required"**
-Sites with a blank `customer_gw_ip` need a live WAN IP at configure time. On Mac/Linux, pass `--orchestrator` to `output/configure-tunnels.sh`. On Windows, populate `customer_gw_ip` manually or use WSL.
+On Mac/Linux, pass `--orchestrator` to `output/configure-tunnels.sh` so it can resolve the live WAN IP. On Windows, `configure_tunnels.ps1` uses `ec_hostname` as the source IP automatically — no Orchestrator needed.
 
 **EdgeConnect login returns `401 "You are not authenticated"`**
 Check that the management IP in `ec_hostname` is reachable, the username/password is correct, and that HTTPS is accessible on the appliance. The scripts handle CSRF tokens automatically — this error usually means the login itself failed.

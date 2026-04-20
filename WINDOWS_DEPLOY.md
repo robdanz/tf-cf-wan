@@ -310,7 +310,7 @@ denver,2,,10.0.0.3
 - For **EC-V (virtual) appliances**: use the `mgmt0` interface IP.
 - For **hardware appliances (EC-S, EC-10104)**: use the Orchestrator's management IP for that appliance (`mgmt0` has no IP on hardware).
 
-**NAT'd or dynamic sites (`customer_gw_ip` left blank):** The configure script will use `0.0.0.0` as the tunnel source, meaning IKE initiates from whatever WAN IP the appliance currently has. This works for NAT traversal as long as the appliance can reach Cloudflare's Anycast IPs.
+**NAT'd or dynamic sites (`customer_gw_ip` left blank):** The configure script uses `ec_hostname` as the IPsec tunnel source IP. NAT traversal (NAT-T) handles the public mapping automatically.
 
 > **Tip:** Use Notepad or another plain text editor, not Excel. Excel may silently reformat the file in ways that break Terraform's CSV parser. If you must use Excel, save as **CSV UTF-8 (Comma delimited)** and verify the output in Notepad afterward.
 
