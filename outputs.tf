@@ -131,6 +131,34 @@ resource "local_file" "remove_tunnels_sh" {
 }
 
 # -------------------------------------------------------------------
+# Generated ECOS configuration script (Windows PowerShell)
+# Produced by terraform apply -- ready to run against EdgeConnect appliances.
+# PSK is embedded; output/ is gitignored.
+# -------------------------------------------------------------------
+resource "local_file" "configure_tunnels_ps1" {
+  filename        = "${path.module}/output/configure-tunnels.ps1"
+  file_permission = "0644"
+
+  content = templatefile("${path.module}/aruba/configure-tunnels.ps1.tftpl", {
+    psk        = random_password.tunnel_psk.result
+    appliances = local.appliance_script_data
+  })
+}
+
+# -------------------------------------------------------------------
+# Generated ECOS tunnel removal script (Windows PowerShell)
+# Self-contained -- works after terraform destroy (no state required).
+# -------------------------------------------------------------------
+resource "local_file" "remove_tunnels_ps1" {
+  filename        = "${path.module}/output/remove-tunnels.ps1"
+  file_permission = "0644"
+
+  content = templatefile("${path.module}/aruba/remove-tunnels.ps1.tftpl", {
+    appliances = local.appliance_script_data
+  })
+}
+
+# -------------------------------------------------------------------
 # Output CSV for CPE configuration
 # -------------------------------------------------------------------
 resource "local_file" "cpe_config_csv" {
