@@ -2,6 +2,17 @@
 
 This guide walks you through deploying Cloudflare Magic WAN IPsec tunnels and configuring your Aruba EdgeConnect appliances from a Windows 11 PC with no prior tools installed.
 
+### What this project does
+
+This project deploys Cloudflare Magic WAN as an **internet on-ramp** for your branch sites. Each site gets two IPsec tunnels to Cloudflare (primary + secondary), and all internet-bound traffic from that site is routed through Cloudflare's network for security inspection, filtering, and policy enforcement.
+
+**This is site-to-internet traffic, not site-to-site.** Cloudflare Magic WAN uses Automatic Return Routing — no static routes are defined in the Cloudflare WAN settings. Return traffic follows the same tunnel automatically.
+
+**What happens after this project completes:**
+1. The IPsec tunnels and VTIs are established and health-checked
+2. The **Aruba SD-WAN administrator** must create a **Business Intent Overlay (BIO)** in the Orchestrator to route internet-destined traffic through the Cloudflare tunnels — without this, traffic continues to use existing breakout policies
+3. If **Cloudflare Gateway TLS inspection** is enabled, the Cloudflare Gateway root CA certificate must be installed on agentless devices (servers, IoT, network equipment), or Gateway **HTTP Do Not Inspect** policies must be defined for destinations where certificate installation is not feasible
+
 **What you will do:**
 1. Install the required tools (Git, Terraform) — one-time setup
 2. Download this project
@@ -9,6 +20,7 @@ This guide walks you through deploying Cloudflare Magic WAN IPsec tunnels and co
 4. Discover your sites from Aruba Orchestrator → `sites.csv`
 5. Create the Cloudflare tunnels with Terraform
 6. Push the IPsec configuration to your EdgeConnect appliances via PowerShell
+7. Complete post-deployment configuration in Aruba and Cloudflare
 
 **Time required:** 30–60 minutes for first deployment, depending on the number of sites.
 
@@ -517,9 +529,54 @@ On the Cloudflare side, the tunnel health checks should show green within a few 
 
 ---
 
-## Part 7 — Rollback (If Needed)
+## Part 7 — Post-Deployment Configuration
 
-### 7.1 — Remove Tunnels and VTIs from Appliances
+The tunnels being up does not automatically route traffic through Cloudflare. Two additional steps are required — one in Aruba Orchestrator, one in Cloudflare if TLS inspection is in use.
+
+### 7.1 — Configure a Business Intent Overlay in Aruba
+
+The Aruba SD-WAN administrator must create a **Business Intent Overlay (BIO)** in the Orchestrator to route internet-destined traffic through the Cloudflare IPsec tunnels.
+
+Until this is done, internet traffic continues to use whatever breakout policy was in place before — the tunnels will be up and health-checked, but no traffic will flow through them.
+
+**What the BIO should do:**
+- Match traffic destined for the internet (typically a default route `0.0.0.0/0` or specific internet-bound applications)
+- Route matched traffic over the passthrough tunnels created by this project (`site-pri` and `site-sec`)
+- Configure failover behavior between primary and secondary tunnels
+
+Refer to the Aruba EdgeConnect / Orchestrator documentation for BIO configuration. The tunnel names to reference are `{site_name}-pri` and `{site_name}-sec` as defined in `sites.csv`.
+
+---
+
+### 7.2 — Cloudflare Gateway TLS Inspection (if enabled)
+
+If **Cloudflare Gateway TLS inspection** is enabled on your account, Cloudflare will decrypt and inspect HTTPS traffic from your sites. For this to work transparently, devices must trust the Cloudflare Gateway root CA certificate.
+
+**Option A — Install the Cloudflare Gateway certificate**
+
+Download the Cloudflare Gateway root CA certificate from your Cloudflare Zero Trust dashboard:
+- Navigate to **Settings** → **Network** → **Certificates**
+- Download the root CA in the format appropriate for your devices
+
+Install it as a trusted root certificate on agentless devices (servers, network equipment, IoT devices, and any device not running the Cloudflare WARP client). The exact process varies by OS and device type:
+- **Windows**: import into the **Trusted Root Certification Authorities** store via `certmgr.msc` or Group Policy
+- **Windows Server / domain-joined devices**: distribute via Group Policy (Computer Configuration → Windows Settings → Security Settings → Public Key Policies → Trusted Root Certification Authorities)
+- **Network appliances**: import via the device's certificate management UI
+
+**Option B — Define Do Not Inspect policies**
+
+For devices or destinations where certificate installation is not feasible, create **HTTP Do Not Inspect** policies in Cloudflare Gateway:
+- Navigate to **Gateway** → **Firewall Policies** → **HTTP**
+- Add a Do Not Inspect policy matching the relevant destinations, applications, or source networks
+- Traffic matching these policies will pass through without TLS decryption
+
+> Without one of these two options, TLS inspection will cause certificate errors on devices that do not trust the Cloudflare Gateway CA.
+
+---
+
+## Part 8 — Rollback (If Needed)
+
+### 8.1 — Remove Tunnels and VTIs from Appliances
 
 ```powershell
 # Preview first:
@@ -541,7 +598,7 @@ The remove script is generated by `terraform apply` with all tunnel names embedd
 
 ---
 
-### 7.2 — Destroy Cloudflare Resources
+### 8.2 — Destroy Cloudflare Resources
 
 After (or instead of) removing the appliance config:
 
@@ -553,7 +610,7 @@ Type `yes` when prompted. This deletes all Cloudflare tunnels and static routes 
 
 ---
 
-## Part 8 — Day 2 Operations
+## Part 9 — Day 2 Operations
 
 ### Adding New Sites
 

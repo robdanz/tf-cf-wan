@@ -1,6 +1,12 @@
 # tf-mwan
 
-Terraform project to deploy Cloudflare Magic WAN IPsec tunnels at scale. You provide a CSV file listing your sites; this project creates two IPsec tunnels per site on Cloudflare (primary + secondary, one to each Anycast IP) and then configures the corresponding tunnels and VTIs directly on your Aruba EdgeConnect appliances.
+Terraform project to deploy Cloudflare Magic WAN as an **internet on-ramp** for Aruba EdgeConnect branch sites. Each site gets two IPsec tunnels to Cloudflare (primary + secondary, one to each Anycast IP), and internet-bound traffic from those sites is routed through Cloudflare's network for security inspection and policy enforcement.
+
+**This is site-to-internet traffic, not site-to-site.** Cloudflare Magic WAN uses Automatic Return Routing — no static routes need to be defined in the Cloudflare WAN settings.
+
+**After the tunnels are up, two steps remain outside this project:**
+1. The **Aruba SD-WAN administrator** creates a **Business Intent Overlay (BIO)** in the Orchestrator to route internet-destined traffic through the Cloudflare tunnels. Until this is done, the tunnels are health-checked but carry no traffic.
+2. If **Cloudflare Gateway TLS inspection** is enabled, the Cloudflare Gateway root CA certificate must be installed on agentless devices (servers, IoT, network equipment), or **HTTP Do Not Inspect** policies must be defined in Gateway for destinations where certificate installation is not feasible.
 
 **What gets created:**
 - Two IPsec tunnels per site on Cloudflare (primary + secondary)
