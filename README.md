@@ -5,7 +5,7 @@ Terraform project to deploy Cloudflare Magic WAN as an **internet on-ramp** for 
 **This is site-to-internet traffic, not site-to-site.** Cloudflare Magic WAN uses Automatic Return Routing — no static routes need to be defined in the Cloudflare WAN settings.
 
 **After the tunnels are up, two steps remain outside this project:**
-1. The **Aruba SD-WAN administrator** creates a **Business Intent Overlay (BIO)** in the Orchestrator to route internet-destined traffic through the Cloudflare tunnels. Until this is done, the tunnels are health-checked but carry no traffic.
+1. The **Aruba SD-WAN administrator** creates a **Business Intent Overlay (BIO)** in the Orchestrator to route internet-destined traffic through the Cloudflare tunnels. The tunnels will show as **up** on the Aruba side immediately, but **Cloudflare health checks will not pass** until traffic has been sent through the tunnel from the Aruba side — ping the Cloudflare VTI inside IPs (from `output/cpe-config.csv`, column `cf_inside_ip`) to validate connectivity and trigger the health checks before deploying the BIO broadly.
 2. If **Cloudflare Gateway TLS inspection** is enabled, the Cloudflare Gateway root CA certificate must be installed on agentless devices (servers, IoT, network equipment), or **HTTP Do Not Inspect** policies must be defined in Gateway for destinations where certificate installation is not feasible.
 
 **What gets created:**

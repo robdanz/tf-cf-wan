@@ -9,7 +9,7 @@ This project deploys Cloudflare Magic WAN as an **internet on-ramp** for your br
 **This is site-to-internet traffic, not site-to-site.** Cloudflare Magic WAN uses Automatic Return Routing — no static routes are defined in the Cloudflare WAN settings. Return traffic follows the same tunnel automatically.
 
 **What happens after this project completes:**
-1. The IPsec tunnels and VTIs are established and health-checked
+1. The IPsec tunnels and VTIs are established — the tunnels show as **up** on the Aruba side
 2. The **Aruba SD-WAN administrator** must create a **Business Intent Overlay (BIO)** in the Orchestrator to route internet-destined traffic through the Cloudflare tunnels — without this, traffic continues to use existing breakout policies
 3. If **Cloudflare Gateway TLS inspection** is enabled, the Cloudflare Gateway root CA certificate must be installed on agentless devices (servers, IoT, network equipment), or Gateway **HTTP Do Not Inspect** policies must be defined for destinations where certificate installation is not feasible
 
@@ -510,7 +510,17 @@ After the script completes, log into an EdgeConnect appliance and confirm:
 - **Configuration → Passthrough Tunnels** — you should see `site-pri` and `site-sec` entries
 - **Configuration → Virtual Interfaces (VTI)** — you should see VTIs for each tunnel with the correct inside IP assigned
 
-On the Cloudflare side, the tunnel health checks should show green within a few minutes of the tunnels coming up.
+The tunnels will show as **up** on the Aruba appliance. However, **Cloudflare health checks will not pass until traffic has been sent through the tunnel from the Aruba side** — the health check is request-based and requires a packet to originate from the CPE.
+
+To validate connectivity and trigger the Cloudflare health checks, ping the Cloudflare VTI inside IP addresses from the Aruba appliance. These are the `cf_inside_ip` values in `output/cpe-config.csv`:
+
+```bash
+# Example — replace with actual cf_inside_ip values from output/cpe-config.csv
+ping 10.120.0.0   # hq-pri Cloudflare VTI
+ping 10.120.0.2   # hq-sec Cloudflare VTI
+```
+
+Once pings succeed, the Cloudflare health checks will show green.
 
 ---
 
@@ -522,7 +532,7 @@ The tunnels being up does not automatically route traffic through Cloudflare. Tw
 
 The Aruba SD-WAN administrator must create a **Business Intent Overlay (BIO)** in the Orchestrator to route internet-destined traffic through the Cloudflare IPsec tunnels.
 
-Until this is done, internet traffic continues to use whatever breakout policy was in place before — the tunnels will be up and health-checked, but no traffic will flow through them.
+Until this is done, internet traffic continues to use whatever breakout policy was in place before — the tunnels will be up on the Aruba side but carry no traffic. Note that Cloudflare health checks also require traffic from the Aruba side to pass; ping the Cloudflare VTI inside IPs (see section 6.4) to confirm the tunnels are functional before deploying the BIO broadly.
 
 **What the BIO should do:**
 - Match traffic destined for the internet (typically a default route `0.0.0.0/0` or specific internet-bound applications)
