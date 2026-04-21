@@ -310,7 +310,7 @@ denver,2,,10.0.0.3
 - For **EC-V (virtual) appliances**: use the `mgmt0` interface IP.
 - For **hardware appliances (EC-S, EC-10104)**: use the Orchestrator's management IP for that appliance (`mgmt0` has no IP on hardware).
 
-**NAT'd or dynamic sites (`customer_gw_ip` left blank):** The configure script uses `ec_hostname` as the IPsec tunnel source IP. NAT traversal (NAT-T) handles the public mapping automatically.
+**NAT'd or dynamic sites (`customer_gw_ip` left blank):** You will need `-Orchestrator` when running `configure-tunnels.ps1` so the script can resolve each appliance's current WAN IP at run time. See Part 6.
 
 > **Tip:** Use Notepad or another plain text editor, not Excel. Excel may silently reformat the file in ways that break Terraform's CSV parser. If you must use Excel, save as **CSV UTF-8 (Comma delimited)** and verify the output in Notepad afterward.
 
@@ -385,11 +385,12 @@ When complete, you'll see:
 Apply complete! Resources: X added, 0 changed, 0 destroyed.
 ```
 
-This also writes four files to the `output\` folder:
+This also writes five files to the `output\` folder:
 - `output\cpe-config.csv` — all tunnel parameters in one place (IPs, IDs, PSK)
 - `output\configure-tunnels.ps1` — PowerShell script to configure EdgeConnect appliances (PSK embedded)
 - `output\remove-tunnels.ps1` — PowerShell script to remove tunnels and VTIs from appliances
 - `output\configure-tunnels.sh` — Bash version of the configure script (for Mac/Linux use)
+- `output\remove-tunnels.sh` — Bash version of the remove script (for Mac/Linux use)
 
 ---
 
@@ -620,9 +621,6 @@ This happens when you replace all sites with a completely new `sites.csv` (new `
 terraform destroy -parallelism=1
 terraform apply -parallelism=1
 ```
-
-### PowerShell script returns "Could not read terraform outputs"
-The script must be run from the repo root folder (`tf-cf-wan`), not from inside `aruba\`. Also ensure `terraform apply` has been run and completed successfully.
 
 ### Login to appliance returns "You are not authenticated"
 - Verify the management IP in `ec_hostname` is reachable: `Test-NetConnection 10.0.0.1 -Port 443`
