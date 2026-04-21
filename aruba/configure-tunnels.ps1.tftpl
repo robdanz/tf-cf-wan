@@ -3,15 +3,21 @@
 #
 # Usage:
 #   .\output\configure-tunnels.ps1 [-Username USER] [-Password PASS]
+#                                  [-Orchestrator HOST] [-OrchToken TOKEN]
 #                                  [-Sites SITE1,SITE2] [-DryRun] [-VerifySSL]
 #
-# -Sites filters by site name (comma-separated). Default: all sites.
+# -Orchestrator is required for NAT'd/dynamic sites (blank customer_gw_ip).
+#   It is used to resolve each appliance's current WAN IP at run time.
+# -OrchToken (or $env:ARUBA_API_TOKEN) provides the Orchestrator API token.
+# -Sites filters by appliance IP/hostname (comma-separated). Default: all sites.
 # PSK and all tunnel data are embedded -- no terraform dependency at run time.
 [CmdletBinding()]
 param(
-    [string] $Username = "admin",
-    [string] $Password = "",
-    [string] $Sites    = "",
+    [string] $Username     = "admin",
+    [string] $Password     = "",
+    [string] $Orchestrator = "",
+    [string] $OrchToken    = $env:ARUBA_API_TOKEN,
+    [string] $Sites        = "",
     [switch] $DryRun,
     [switch] $VerifySSL
 )
@@ -132,6 +138,83 @@ function Invoke-ECAPI {
 }
 
 # ---------------------------------------------------------------------------
+# Orchestrator helpers -- used only for NAT'd/dynamic sites to resolve WAN IP
+# ---------------------------------------------------------------------------
+function Invoke-OrchAPI {
+    param([string]$OrchHost, [string]$Token, [string]$Path)
+    $params = @{
+        Method          = "GET"
+        Uri             = "https://$OrchHost$Path"
+        Headers         = @{ "X-Auth-Token" = $Token; "Accept" = "application/json" }
+        UseBasicParsing = $true
+        ErrorAction     = "Stop"
+    }
+    if (-not $VerifySSL -and $PSVersionTable.PSVersion.Major -ge 6) { $params.SkipCertificateCheck = $true }
+    $resp = Invoke-WebRequest @params
+    # Rename lowercase "ip" key before parsing to avoid duplicate-key crash in PS5.1
+    $json = $resp.Content -replace '"ip"(\s*:)', '"_ip_lc"$1'
+    return $json | ConvertFrom-Json
+}
+
+function Get-ApplianceWanIP {
+    param([string]$OrchHost, [string]$Token, [string]$ApplianceHost)
+
+    # Find the appliance's nePk
+    try {
+        $raw = Invoke-OrchAPI -OrchHost $OrchHost -Token $Token -Path "/gms/rest/appliance"
+    } catch {
+        throw "Could not query Orchestrator appliance list: $($_.Exception.Message)"
+    }
+    $appList = if ($raw -is [System.Array]) { $raw } else { @($raw) }
+
+    $nePk = $null
+    foreach ($ap in $appList) {
+        $apIp = if ($ap.PSObject.Properties['IP'])      { $ap.IP }
+                elseif ($ap.PSObject.Properties['_ip_lc']) { $ap._ip_lc }
+                else { "" }
+        $apHn = if ($ap.PSObject.Properties['hostName']) { $ap.hostName } else { "" }
+        if ($apIp -eq $ApplianceHost -or $apHn -eq $ApplianceHost) {
+            foreach ($field in @('id', 'nePk', 'nepk')) {
+                if ($ap.PSObject.Properties[$field]) { $nePk = $ap.$field; break }
+            }
+            break
+        }
+    }
+    if (-not $nePk) {
+        throw "Appliance '$ApplianceHost' not found in Orchestrator"
+    }
+
+    # Get interface state
+    try {
+        $ifaces = Invoke-OrchAPI -OrchHost $OrchHost -Token $Token -Path "/gms/rest/interfaceState?nePk=$nePk&cached=true"
+    } catch {
+        throw "Could not query interface state for '$ApplianceHost' (nePk=$nePk): $($_.Exception.Message)"
+    }
+
+    $ifInfo = if ($ifaces.PSObject.Properties['ifInfo']) { @($ifaces.ifInfo) } else { @() }
+    $wanIfs = @($ifInfo | Where-Object { $_.ifname -like "wan*" -and $_.oper -eq $true })
+
+    # Prefer publicIp (routable), fall back to ipv4
+    $wanIp = $null
+    foreach ($wif in $wanIfs) {
+        if ($wif.PSObject.Properties['publicIp'] -and $wif.publicIp -and $wif.publicIp -ne "0.0.0.0") {
+            $wanIp = $wif.publicIp; break
+        }
+    }
+    if (-not $wanIp) {
+        foreach ($wif in $wanIfs) {
+            if ($wif.PSObject.Properties['ipv4'] -and $wif.ipv4 -and $wif.ipv4 -ne "0.0.0.0") {
+                $wanIp = $wif.ipv4; break
+            }
+        }
+    }
+    if (-not $wanIp) {
+        throw "Could not resolve WAN IP for '$ApplianceHost' from Orchestrator interface state"
+    }
+    return $wanIp
+}
+
+# ---------------------------------------------------------------------------
 # Create a VTI on the appliance for one tunnel (idempotent)
 # ---------------------------------------------------------------------------
 function New-VTI {
@@ -199,11 +282,33 @@ function Invoke-ConfigureSite {
 
     if ($DryRun) {
         foreach ($t in $Tunnels) {
-            $src = if ($t.Source) { $t.Source } else { "$ECHost (ec_hostname -- NAT)" }
+            $src = if ($t.Source) { $t.Source } else { "(NAT'd -- will resolve from Orchestrator)" }
             Write-Info "  [DRY RUN] Would create tunnel: $($t.Name)  source=$src"
             Write-Info "  [DRY RUN] Would create VTI: $($t.Name)  ip=$($t.CpeInsideIP)/$($t.PrefixLen)"
         }
         return $true
+    }
+
+    # Resolve WAN IP from Orchestrator for NAT'd/dynamic sites
+    $wanIp = $null
+    $hasNat = $Tunnels | Where-Object { -not $_.Source } | Select-Object -First 1
+    if ($hasNat) {
+        if (-not $Orchestrator) {
+            Write-Err "  -Orchestrator required for $SiteName (NAT'd site) -- skipping"
+            return $false
+        }
+        if (-not $OrchToken) {
+            Write-Err "  -OrchToken (or `$env:ARUBA_API_TOKEN) required for Orchestrator lookup -- skipping"
+            return $false
+        }
+        Write-Host "  Resolving WAN IP from Orchestrator..." -NoNewline
+        try {
+            $wanIp = Get-ApplianceWanIP -OrchHost $Orchestrator -Token $OrchToken -ApplianceHost $ECHost
+            Write-Host " $wanIp"
+        } catch {
+            Write-Err "  $_"
+            return $false
+        }
     }
 
     try {
@@ -232,10 +337,10 @@ function Invoke-ConfigureSite {
         }
 
         # Payload is pre-built JSON embedded at terraform apply time.
-        # For NAT'd sites (Source==""), patch source=0.0.0.0 -> ec_hostname so ECOS accepts it.
+        # For NAT'd sites (Source==""), patch the 0.0.0.0 placeholder with the resolved WAN IP.
         $payloadJson = $t.Payload
         if (-not $t.Source) {
-            $payloadJson = $payloadJson -replace '"source":"0.0.0.0"', "`"source`":`"$ECHost`""
+            $payloadJson = $payloadJson -replace '"source":"0.0.0.0"', "`"source`":`"$wanIp`""
         }
 
         Write-Host "  Creating $($t.Name)..." -NoNewline
@@ -284,9 +389,9 @@ $script:Appliances = @(
 # ---------------------------------------------------------------------------
 if ($Sites) {
     $siteFilter         = $Sites -split "," | ForEach-Object { $_.Trim() }
-    $script:Appliances  = @($script:Appliances | Where-Object { $_.SiteName -in $siteFilter })
+    $script:Appliances  = @($script:Appliances | Where-Object { $_.ECHost -in $siteFilter })
     if ($script:Appliances.Count -eq 0) {
-        Write-Err "No sites matched --Sites '$Sites'"
+        Write-Err "No appliances matched -Sites '$Sites'"
         exit 1
     }
 }

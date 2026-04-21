@@ -439,8 +439,22 @@ This prints what it would do — which appliances it would connect to, which tun
 
 ### 6.2 — Run the Configuration
 
+**Static sites** (all sites have a `customer_gw_ip`):
+
 ```powershell
 .\output\configure-tunnels.ps1
+```
+
+**NAT'd or dynamic sites** (any site has a blank `customer_gw_ip`): The script needs to resolve the appliance's current WAN IP from the Orchestrator at run time. Make sure `$env:ARUBA_API_TOKEN` is set (from Step 4A.2), then:
+
+```powershell
+.\output\configure-tunnels.ps1 -Orchestrator 10.0.0.100
+```
+
+Or pass the token directly:
+
+```powershell
+.\output\configure-tunnels.ps1 -Orchestrator 10.0.0.100 -OrchToken "your-token-here"
 ```
 
 You will be prompted once for the EdgeConnect admin password. The same password is used for all appliances.
@@ -622,7 +636,7 @@ The `configure-tunnels.ps1` script is idempotent on the appliance side (skips ex
 3. Run `output\configure-tunnels.ps1` to push config to the appliances
 
 ### Sites with blank `customer_gw_ip` (NAT'd sites)
-For NAT'd/dynamic sites, the configure script uses `ec_hostname` as the IPsec tunnel source IP. NAT traversal (NAT-T) handles the public IP mapping automatically — no Orchestrator lookup is needed.
+Pass `-Orchestrator` to `output\configure-tunnels.ps1` so it can resolve each appliance's WAN IP at run time. Set `$env:ARUBA_API_TOKEN` so you don't have to pass `-OrchToken` each time.
 
 ---
 
