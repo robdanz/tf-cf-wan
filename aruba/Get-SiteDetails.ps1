@@ -94,57 +94,58 @@ public class TrustAllOrchCerts : ICertificatePolicy {
 function Write-Info { param([string]$Msg) Write-Host "INFO  $Msg" }
 function Write-Warn { param([string]$Msg) Write-Host "WARN  $Msg" -ForegroundColor Yellow }
 
-# PS5.1 ConvertFrom-Json is case-insensitive and crashes when the Orchestrator
-# returns duplicate keys that differ only in case (e.g. "IP"/"ip", "maxOptMaps"/
-# "maxOptmaps", "maxRouteMaps"/"maxRoutemaps"). This function renames every
-# duplicate key within its containing object by prepending '_dedup_', making the
-# JSON safe to parse. Parses character-by-character so object/array nesting and
-# string escapes are handled correctly.
+# PS5.1 ConvertFrom-Json is case-insensitive and crashes on duplicate keys that
+# differ only in case (e.g. "IP"/"ip", "maxOptMaps"/"maxOptmaps"). Renames every
+# duplicate key within its containing object by prepending '_dedup_'. Parses
+# char-by-char so nesting and string escapes are handled correctly.
+#
+# Implementation note: uses PS-native @{} hashtables (not HashSet[string]) and
+# ArrayList (not Stack) to avoid PS5.1 type-coercion bugs when generic .NET types
+# round-trip through non-generic collections.
 function Remove-DuplicateJsonKeys {
     param([string]$Json)
-    $out   = [System.Text.StringBuilder]::new($Json.Length)
+    $out   = New-Object System.Text.StringBuilder $Json.Length
     $i     = 0
     $n     = $Json.Length
-    $stack = [System.Collections.Stack]::new()
-    $seen  = $null   # HashSet for current object; $null when inside an array
+    $stack = New-Object System.Collections.ArrayList
+    $seen  = $null   # @{} hashtable of lowercase keys for current object; $null in arrays
 
     while ($i -lt $n) {
         $ch = $Json[$i]
         if ($ch -eq '{') {
-            $stack.Push($seen)
-            $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            [void]$stack.Add($seen)
+            $seen = @{}
             [void]$out.Append($ch); $i++
         } elseif ($ch -eq '}') {
-            $seen = if ($stack.Count) { $stack.Pop() } else { $null }
+            if ($stack.Count) { $seen = $stack[$stack.Count - 1]; $stack.RemoveAt($stack.Count - 1) } else { $seen = $null }
             [void]$out.Append($ch); $i++
         } elseif ($ch -eq '[') {
-            $stack.Push($seen); $seen = $null
+            [void]$stack.Add($seen); $seen = $null
             [void]$out.Append($ch); $i++
         } elseif ($ch -eq ']') {
-            $seen = if ($stack.Count) { $stack.Pop() } else { $null }
+            if ($stack.Count) { $seen = $stack[$stack.Count - 1]; $stack.RemoveAt($stack.Count - 1) } else { $seen = $null }
             [void]$out.Append($ch); $i++
         } elseif ($ch -eq '"') {
-            # Read the full quoted string, respecting backslash escapes
             $start = $i; $i++
             while ($i -lt $n -and $Json[$i] -ne '"') {
                 if ($Json[$i] -eq '\') { $i++ }
                 $i++
             }
-            $i++  # past closing quote
+            $i++
             $rawStr = $Json.Substring($start, $i - $start)
             $key    = $Json.Substring($start + 1, $i - $start - 2)
-
-            # Peek past whitespace: if next non-ws char is ':', this is an object key
             $j = $i
             while ($j -lt $n -and ($Json[$j] -eq ' ' -or $Json[$j] -eq "`t" -or $Json[$j] -eq "`n" -or $Json[$j] -eq "`r")) { $j++ }
             if ($j -lt $n -and $Json[$j] -eq ':' -and $null -ne $seen) {
-                if (-not $seen.Add($key)) {
-                    [void]$out.Append("`"_dedup_$key`"")   # rename duplicate
+                $keyLc = $key.ToLower()
+                if ($seen.ContainsKey($keyLc)) {
+                    [void]$out.Append("`"_dedup_$key`"")
                 } else {
+                    $seen[$keyLc] = $true
                     [void]$out.Append($rawStr)
                 }
             } else {
-                [void]$out.Append($rawStr)   # string value, not a key
+                [void]$out.Append($rawStr)
             }
         } else {
             [void]$out.Append($ch); $i++

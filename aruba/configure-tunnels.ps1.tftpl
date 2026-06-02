@@ -145,28 +145,30 @@ function Invoke-ECAPI {
 # differ only in case (e.g. "IP"/"ip", "maxOptMaps"/"maxOptmaps"). Renames every
 # duplicate key within its containing object by prepending '_dedup_'. Parses
 # char-by-char so nesting and string escapes are handled correctly.
+# Uses PS-native @{} hashtables + ArrayList (not HashSet/Stack) to avoid PS5.1
+# type-coercion bugs when generic .NET types round-trip through non-generic collections.
 function Remove-DuplicateJsonKeys {
     param([string]$Json)
-    $out   = [System.Text.StringBuilder]::new($Json.Length)
+    $out   = New-Object System.Text.StringBuilder $Json.Length
     $i     = 0
     $n     = $Json.Length
-    $stack = [System.Collections.Stack]::new()
+    $stack = New-Object System.Collections.ArrayList
     $seen  = $null
 
     while ($i -lt $n) {
         $ch = $Json[$i]
         if ($ch -eq '{') {
-            $stack.Push($seen)
-            $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            [void]$stack.Add($seen)
+            $seen = @{}
             [void]$out.Append($ch); $i++
         } elseif ($ch -eq '}') {
-            $seen = if ($stack.Count) { $stack.Pop() } else { $null }
+            if ($stack.Count) { $seen = $stack[$stack.Count - 1]; $stack.RemoveAt($stack.Count - 1) } else { $seen = $null }
             [void]$out.Append($ch); $i++
         } elseif ($ch -eq '[') {
-            $stack.Push($seen); $seen = $null
+            [void]$stack.Add($seen); $seen = $null
             [void]$out.Append($ch); $i++
         } elseif ($ch -eq ']') {
-            $seen = if ($stack.Count) { $stack.Pop() } else { $null }
+            if ($stack.Count) { $seen = $stack[$stack.Count - 1]; $stack.RemoveAt($stack.Count - 1) } else { $seen = $null }
             [void]$out.Append($ch); $i++
         } elseif ($ch -eq '"') {
             $start = $i; $i++
@@ -180,9 +182,11 @@ function Remove-DuplicateJsonKeys {
             $j = $i
             while ($j -lt $n -and ($Json[$j] -eq ' ' -or $Json[$j] -eq "`t" -or $Json[$j] -eq "`n" -or $Json[$j] -eq "`r")) { $j++ }
             if ($j -lt $n -and $Json[$j] -eq ':' -and $null -ne $seen) {
-                if (-not $seen.Add($key)) {
+                $keyLc = $key.ToLower()
+                if ($seen.ContainsKey($keyLc)) {
                     [void]$out.Append("`"_dedup_$key`"")
                 } else {
+                    $seen[$keyLc] = $true
                     [void]$out.Append($rawStr)
                 }
             } else {
