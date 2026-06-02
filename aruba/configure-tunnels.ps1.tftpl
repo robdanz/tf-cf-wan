@@ -140,6 +140,61 @@ function Invoke-ECAPI {
 # ---------------------------------------------------------------------------
 # Orchestrator helpers -- used only for NAT'd/dynamic sites to resolve WAN IP
 # ---------------------------------------------------------------------------
+
+# PS5.1 ConvertFrom-Json is case-insensitive and crashes on duplicate keys that
+# differ only in case (e.g. "IP"/"ip", "maxOptMaps"/"maxOptmaps"). Renames every
+# duplicate key within its containing object by prepending '_dedup_'. Parses
+# char-by-char so nesting and string escapes are handled correctly.
+function Remove-DuplicateJsonKeys {
+    param([string]$Json)
+    $out   = [System.Text.StringBuilder]::new($Json.Length)
+    $i     = 0
+    $n     = $Json.Length
+    $stack = [System.Collections.Stack]::new()
+    $seen  = $null
+
+    while ($i -lt $n) {
+        $ch = $Json[$i]
+        if ($ch -eq '{') {
+            $stack.Push($seen)
+            $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            [void]$out.Append($ch); $i++
+        } elseif ($ch -eq '}') {
+            $seen = if ($stack.Count) { $stack.Pop() } else { $null }
+            [void]$out.Append($ch); $i++
+        } elseif ($ch -eq '[') {
+            $stack.Push($seen); $seen = $null
+            [void]$out.Append($ch); $i++
+        } elseif ($ch -eq ']') {
+            $seen = if ($stack.Count) { $stack.Pop() } else { $null }
+            [void]$out.Append($ch); $i++
+        } elseif ($ch -eq '"') {
+            $start = $i; $i++
+            while ($i -lt $n -and $Json[$i] -ne '"') {
+                if ($Json[$i] -eq '\') { $i++ }
+                $i++
+            }
+            $i++
+            $rawStr = $Json.Substring($start, $i - $start)
+            $key    = $Json.Substring($start + 1, $i - $start - 2)
+            $j = $i
+            while ($j -lt $n -and ($Json[$j] -eq ' ' -or $Json[$j] -eq "`t" -or $Json[$j] -eq "`n" -or $Json[$j] -eq "`r")) { $j++ }
+            if ($j -lt $n -and $Json[$j] -eq ':' -and $null -ne $seen) {
+                if (-not $seen.Add($key)) {
+                    [void]$out.Append("`"_dedup_$key`"")
+                } else {
+                    [void]$out.Append($rawStr)
+                }
+            } else {
+                [void]$out.Append($rawStr)
+            }
+        } else {
+            [void]$out.Append($ch); $i++
+        }
+    }
+    return $out.ToString()
+}
+
 function Invoke-OrchAPI {
     param([string]$OrchHost, [string]$Token, [string]$Path)
     $params = @{
@@ -151,10 +206,7 @@ function Invoke-OrchAPI {
     }
     if (-not $VerifySSL -and $PSVersionTable.PSVersion.Major -ge 6) { $params.SkipCertificateCheck = $true }
     $resp = Invoke-WebRequest @params
-    # Rename lowercase "ip" key before parsing to avoid duplicate-key crash in PS5.1
-    $json = $resp.Content -replace '"ip"(\s*:)', '"_ip_lc"$1'
-    $json = $json -creplace '"maxRoutemaps"(\s*:)', '"_maxRoutemaps_lc"$1'
-    return $json | ConvertFrom-Json
+    return (Remove-DuplicateJsonKeys $resp.Content) | ConvertFrom-Json
 }
 
 function Get-ApplianceWanIP {

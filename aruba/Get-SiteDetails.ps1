@@ -94,6 +94,65 @@ public class TrustAllOrchCerts : ICertificatePolicy {
 function Write-Info { param([string]$Msg) Write-Host "INFO  $Msg" }
 function Write-Warn { param([string]$Msg) Write-Host "WARN  $Msg" -ForegroundColor Yellow }
 
+# PS5.1 ConvertFrom-Json is case-insensitive and crashes when the Orchestrator
+# returns duplicate keys that differ only in case (e.g. "IP"/"ip", "maxOptMaps"/
+# "maxOptmaps", "maxRouteMaps"/"maxRoutemaps"). This function renames every
+# duplicate key within its containing object by prepending '_dedup_', making the
+# JSON safe to parse. Parses character-by-character so object/array nesting and
+# string escapes are handled correctly.
+function Remove-DuplicateJsonKeys {
+    param([string]$Json)
+    $out   = [System.Text.StringBuilder]::new($Json.Length)
+    $i     = 0
+    $n     = $Json.Length
+    $stack = [System.Collections.Stack]::new()
+    $seen  = $null   # HashSet for current object; $null when inside an array
+
+    while ($i -lt $n) {
+        $ch = $Json[$i]
+        if ($ch -eq '{') {
+            $stack.Push($seen)
+            $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            [void]$out.Append($ch); $i++
+        } elseif ($ch -eq '}') {
+            $seen = if ($stack.Count) { $stack.Pop() } else { $null }
+            [void]$out.Append($ch); $i++
+        } elseif ($ch -eq '[') {
+            $stack.Push($seen); $seen = $null
+            [void]$out.Append($ch); $i++
+        } elseif ($ch -eq ']') {
+            $seen = if ($stack.Count) { $stack.Pop() } else { $null }
+            [void]$out.Append($ch); $i++
+        } elseif ($ch -eq '"') {
+            # Read the full quoted string, respecting backslash escapes
+            $start = $i; $i++
+            while ($i -lt $n -and $Json[$i] -ne '"') {
+                if ($Json[$i] -eq '\') { $i++ }
+                $i++
+            }
+            $i++  # past closing quote
+            $rawStr = $Json.Substring($start, $i - $start)
+            $key    = $Json.Substring($start + 1, $i - $start - 2)
+
+            # Peek past whitespace: if next non-ws char is ':', this is an object key
+            $j = $i
+            while ($j -lt $n -and ($Json[$j] -eq ' ' -or $Json[$j] -eq "`t" -or $Json[$j] -eq "`n" -or $Json[$j] -eq "`r")) { $j++ }
+            if ($j -lt $n -and $Json[$j] -eq ':' -and $null -ne $seen) {
+                if (-not $seen.Add($key)) {
+                    [void]$out.Append("`"_dedup_$key`"")   # rename duplicate
+                } else {
+                    [void]$out.Append($rawStr)
+                }
+            } else {
+                [void]$out.Append($rawStr)   # string value, not a key
+            }
+        } else {
+            [void]$out.Append($ch); $i++
+        }
+    }
+    return $out.ToString()
+}
+
 function Invoke-OrchAPI {
     param([string]$Endpoint)
     $params = @{
@@ -108,16 +167,10 @@ function Invoke-OrchAPI {
     if (-not $VerifySSL -and $PSVersionTable.PSVersion.Major -ge 6) {
         $params.SkipCertificateCheck = $true
     }
-    # -UseBasicParsing: skip IE engine (avoids interactive prompt on PS5.1).
-    # Explicit ConvertFrom-Json: PS5.1 Invoke-RestMethod skips JSON parsing when
-    # the server omits Content-Type: application/json.
-    # Rename "ip": -> "_ip_lc": before parsing: the Orchestrator returns both "IP"
-    # and "ip" (same value); PS5.1 ConvertFrom-Json is case-insensitive and throws
-    # on duplicate keys. The lowercase copy is unused — renaming it sidesteps the error.
+    # -UseBasicParsing avoids the IE engine prompt on PS5.1.
+    # Remove-DuplicateJsonKeys sanitizes any case-only duplicate keys before parsing.
     $response = Invoke-WebRequest -UseBasicParsing @params
-    $json = $response.Content -replace '"ip"(\s*:)', '"_ip_lc"$1'
-    $json = $json -creplace '"maxRoutemaps"(\s*:)', '"_maxRoutemaps_lc"$1'
-    return $json | ConvertFrom-Json
+    return (Remove-DuplicateJsonKeys $response.Content) | ConvertFrom-Json
 }
 
 # Returns $true if the IP is a routable public address (not RFC1918, not link-local, not empty)
