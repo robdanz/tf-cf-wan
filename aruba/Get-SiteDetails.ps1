@@ -116,6 +116,7 @@ function Invoke-OrchAPI {
     # on duplicate keys. The lowercase copy is unused — renaming it sidesteps the error.
     $response = Invoke-WebRequest -UseBasicParsing @params
     $json = $response.Content -replace '"ip"(\s*:)', '"_ip_lc"$1'
+    $json = $json -creplace '"maxRoutemaps"(\s*:)', '"_maxRoutemaps_lc"$1'
     return $json | ConvertFrom-Json
 }
 

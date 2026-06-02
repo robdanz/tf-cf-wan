@@ -153,6 +153,7 @@ function Invoke-OrchAPI {
     $resp = Invoke-WebRequest @params
     # Rename lowercase "ip" key before parsing to avoid duplicate-key crash in PS5.1
     $json = $resp.Content -replace '"ip"(\s*:)', '"_ip_lc"$1'
+    $json = $json -creplace '"maxRoutemaps"(\s*:)', '"_maxRoutemaps_lc"$1'
     return $json | ConvertFrom-Json
 }
 
