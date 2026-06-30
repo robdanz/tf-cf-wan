@@ -300,7 +300,7 @@ function New-VTI {
     $nextNum = if ($nums) { ($nums | Measure-Object -Maximum).Maximum + 1 } else { 110 }
     $vtiKey  = "vti$nextNum"
 
-    $vtiPayload = @{
+    $vtiObj = @{
         admin           = $true
         auto_distribute = $false
         behindNAT       = "none"
@@ -309,7 +309,7 @@ function New-VTI {
         ipaddr_alias    = "0.0.0.0"
         label           = ""
         label_alias     = ""
-        nmask           = $Tunnel.PrefixLen
+        nmask           = [int]$Tunnel.PrefixLen
         nmask_alias     = 0
         role_id         = 0
         side            = "lan"
@@ -318,12 +318,26 @@ function New-VTI {
         zone            = 0
     }
 
+    # Try key-in-URL first (documented format), fall back to key-in-body (tunnel-style wrapping)
+    $vtiJson = ConvertTo-Json -InputObject $vtiObj -Depth 10 -Compress
+    Write-Info "    VTI payload ($vtiKey): $vtiJson"
     try {
-        Invoke-ECAPI -Method "POST" -Uri "https://$ECHost/rest/json/virtualif/vti/$vtiKey" -Auth $Auth -Body $vtiPayload | Out-Null
-        Write-Info "    VTI OK ($vtiKey)"
+        Invoke-ECAPI -Method "POST" -Uri "https://$ECHost/rest/json/virtualif/vti/$vtiKey" -Auth $Auth -Body $vtiObj | Out-Null
+        Write-Info "    VTI OK ($vtiKey) [key-in-URL]"
         return $true
     } catch {
-        Write-Warn "    VTI FAILED: $($_.Exception.Message)"
+        Write-Warn "    VTI key-in-URL failed: $($_.Exception.Message)"
+        Write-Info "    Retrying with key-in-body format..."
+    }
+
+    # Fallback: wrap payload with vtiN key (same pattern as thirdPartyTunnels)
+    $wrappedPayload = @{ $vtiKey = $vtiObj }
+    try {
+        Invoke-ECAPI -Method "POST" -Uri "https://$ECHost/rest/json/virtualif/vti" -Auth $Auth -Body $wrappedPayload | Out-Null
+        Write-Info "    VTI OK ($vtiKey) [key-in-body]"
+        return $true
+    } catch {
+        Write-Warn "    VTI FAILED (both formats): $($_.Exception.Message)"
         return $false
     }
 }
