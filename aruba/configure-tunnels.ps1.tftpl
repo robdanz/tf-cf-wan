@@ -300,44 +300,23 @@ function New-VTI {
     $nextNum = if ($nums) { ($nums | Measure-Object -Maximum).Maximum + 1 } else { 110 }
     $vtiKey  = "vti$nextNum"
 
+    # Minimal payload — only fields visible in ECOS UI
     $vtiObj = @{
-        admin           = $true
-        auto_distribute = $false
-        behindNAT       = "none"
-        gms_marked      = $false
-        ipaddr          = $Tunnel.CpeInsideIP
-        ipaddr_alias    = "0.0.0.0"
-        label           = ""
-        label_alias     = ""
-        nmask           = [int]$Tunnel.PrefixLen
-        nmask_alias     = 0
-        role_id         = 0
-        side            = "lan"
-        tunnel          = $Tunnel.Name
-        vrf_id          = 0
-        zone            = 0
+        admin  = $true
+        ipaddr = $Tunnel.CpeInsideIP
+        nmask  = [int]$Tunnel.PrefixLen
+        side   = "lan"
+        tunnel = $Tunnel.Name
     }
 
-    # Try key-in-URL first (documented format), fall back to key-in-body (tunnel-style wrapping)
     $vtiJson = ConvertTo-Json -InputObject $vtiObj -Depth 10 -Compress
     Write-Info "    VTI payload ($vtiKey): $vtiJson"
     try {
         Invoke-ECAPI -Method "POST" -Uri "https://$ECHost/rest/json/virtualif/vti/$vtiKey" -Auth $Auth -Body $vtiObj | Out-Null
-        Write-Info "    VTI OK ($vtiKey) [key-in-URL]"
+        Write-Info "    VTI OK ($vtiKey)"
         return $true
     } catch {
-        Write-Warn "    VTI key-in-URL failed: $($_.Exception.Message)"
-        Write-Info "    Retrying with key-in-body format..."
-    }
-
-    # Fallback: wrap payload with vtiN key (same pattern as thirdPartyTunnels)
-    $wrappedPayload = @{ $vtiKey = $vtiObj }
-    try {
-        Invoke-ECAPI -Method "POST" -Uri "https://$ECHost/rest/json/virtualif/vti" -Auth $Auth -Body $wrappedPayload | Out-Null
-        Write-Info "    VTI OK ($vtiKey) [key-in-body]"
-        return $true
-    } catch {
-        Write-Warn "    VTI FAILED (both formats): $($_.Exception.Message)"
+        Write-Warn "    VTI FAILED: $($_.Exception.Message)"
         return $false
     }
 }
