@@ -302,7 +302,7 @@ function New-VTI {
 
     $vtiPayload = @{
         admin           = $true
-        auto_distribute = $true
+        auto_distribute = $false
         behindNAT       = "none"
         gms_marked      = $false
         ipaddr          = $Tunnel.CpeInsideIP

@@ -154,17 +154,18 @@ if _site_selected "${ap.ec_host}"; then
             "https://${ap.ec_host}/rest/json/virtualif/vti" \
             | jq -r '[keys[] | select(test("^vti[0-9]+$")) | ltrimstr("vti") | tonumber] | if length == 0 then 110 else (max + 1) end' \
             2>/dev/null || echo "110")
-          _vhttp=$(curl -s $K -o /dev/null -w "%%{http_code}" \
+          _vhttp=$(curl -s $K -o /tmp/_vti_$$.json -w "%%{http_code}" \
             -b "$_C" -H "X-XSRF-TOKEN: $_csrf" \
             -X POST "https://${ap.ec_host}/rest/json/virtualif/vti/vti$_vti_next" \
             -H 'Content-Type: application/json' \
-            -d '{"admin":true,"auto_distribute":true,"behindNAT":"none","gms_marked":false,"ipaddr":"${t.cpe_inside_ip}","ipaddr_alias":"0.0.0.0","label":"","label_alias":"","nmask":${t.prefix_len},"nmask_alias":0,"role_id":0,"side":"lan","tunnel":"${t.tunnel_name}","vrf_id":0,"zone":0}')
+            -d '{"admin":true,"auto_distribute":false,"behindNAT":"none","gms_marked":false,"ipaddr":"${t.cpe_inside_ip}","ipaddr_alias":"0.0.0.0","label":"","label_alias":"","nmask":${t.prefix_len},"nmask_alias":0,"role_id":0,"side":"lan","tunnel":"${t.tunnel_name}","vrf_id":0,"zone":0}')
           if [[ "$_vhttp" == "200" || "$_vhttp" == "201" || "$_vhttp" == "204" ]]; then
             _info "    VTI OK (vti$_vti_next)"
           else
-            _warn "    VTI FAILED (HTTP $_vhttp)"
+            _warn "    VTI FAILED (HTTP $_vhttp) -- $(cat /tmp/_vti_$$.json 2>/dev/null)"
             ERRORS=$((ERRORS+1))
           fi
+          rm -f /tmp/_vti_$$.json
         fi
       else
         _warn "    Tunnel FAILED (HTTP $_thttp)"
