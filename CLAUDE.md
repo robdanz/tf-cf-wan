@@ -125,7 +125,7 @@ All account-specific and tuneable values live in `terraform.tfvars` (gitignored)
 
 ## Key Conventions
 
-- `customer_gw_ip` is optional — blank for NAT'd/dynamic CPE; sets `customer_endpoint = null`
+- `customer_gw_ip` is optional — blank for NAT'd/dynamic CPE. The Cloudflare tunnel's `customer_endpoint` is always `null` regardless (even known-static addresses can be dynamically NAT'd); tunnels are identified via the FQDN ID (`ike_id_local`), not a fixed source IP. `customer_gw_ip` is still used for the CPE-side `source` field in the ECOS payload and to decide whether `configure-tunnels.sh`/`.ps1` needs `--orchestrator` to resolve the live WAN IP.
 - Health check target is always the CPE inside (VTI) IP — not `customer_gw_ip`
 - Tunnel names: `{site_name}-{pri|sec}`
 - Supernet `/22` + 9 bits = /31 → 512 subnets → max 256 sites

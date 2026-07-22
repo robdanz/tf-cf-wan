@@ -17,7 +17,10 @@ resource "cloudflare_magic_wan_ipsec_tunnel" "tunnels" {
   name                = each.key
   description         = "Site ${each.value.site_name} ${each.value.tunnel_label} tunnel"
   cloudflare_endpoint = each.value.cloudflare_endpoint
-  customer_endpoint   = each.value.customer_gw_ip != "" ? each.value.customer_gw_ip : null
+  # Always omitted — even sites with a known customer_gw_ip can sit behind dynamic
+  # NAT, so a fixed customer_endpoint would go stale. The tunnel is identified via
+  # the FQDN ID (ike_id_local) instead.
+  customer_endpoint   = null
   interface_address   = local.tunnel_ips[each.key].interface_cidr
   psk                 = random_password.tunnel_psk.result
   replay_protection          = var.replay_protection
