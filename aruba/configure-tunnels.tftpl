@@ -85,10 +85,12 @@ if _site_selected "${ap.ec_host}"; then
     else
       _ne_json=$(curl -s $K -H "X-Auth-Token: $ORCH_TOKEN" -H "Accept: application/json" \
         "https://$ORCH_HOST/gms/rest/appliance" 2>/dev/null || echo "[]")
-      _ne_pk=$(echo "$_ne_json" | jq -r --arg h "${ap.ec_host}" \
-        'first(.[] | select(.IP == $h or .hostName == $h) | .id) // ""' 2>/dev/null || echo "")
+      # Orchestrator's inventory "IP" is often a fabric loopback (e.g. lo20000), not the
+      # mgmt0 IP used for direct ECOS API calls -- so match by hostname/site name too.
+      _ne_pk=$(echo "$_ne_json" | jq -r --arg h "${ap.ec_host}" --arg s "${ap.site_name}" \
+        'first(.[] | select(.IP == $h or .hostName == $h or .hostName == $s) | .id) // ""' 2>/dev/null || echo "")
       if [[ -z "$_ne_pk" ]]; then
-        _warn "  Could not find nePk for ${ap.ec_host} in Orchestrator — skipping"
+        _warn "  Could not find nePk for ${ap.ec_host} (site ${ap.site_name}) in Orchestrator — skipping"
         _skip=true
       else
         _iface_json=$(curl -s $K -H "X-Auth-Token: $ORCH_TOKEN" -H "Accept: application/json" \

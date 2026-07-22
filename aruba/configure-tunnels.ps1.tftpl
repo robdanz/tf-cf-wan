@@ -214,7 +214,7 @@ function Invoke-OrchAPI {
 }
 
 function Get-ApplianceWanIP {
-    param([string]$OrchHost, [string]$Token, [string]$ApplianceHost)
+    param([string]$OrchHost, [string]$Token, [string]$ApplianceHost, [string]$SiteName)
 
     # Find the appliance's nePk
     try {
@@ -224,13 +224,15 @@ function Get-ApplianceWanIP {
     }
     $appList = if ($raw -is [System.Array]) { $raw } else { @($raw) }
 
+    # Orchestrator's inventory "IP" is often a fabric loopback (e.g. lo20000), not the
+    # mgmt0 IP used for direct ECOS API calls -- so match by hostname/site name too.
     $nePk = $null
     foreach ($ap in $appList) {
         $apIp = if ($ap.PSObject.Properties['IP'])      { $ap.IP }
                 elseif ($ap.PSObject.Properties['_ip_lc']) { $ap._ip_lc }
                 else { "" }
         $apHn = if ($ap.PSObject.Properties['hostName']) { $ap.hostName } else { "" }
-        if ($apIp -eq $ApplianceHost -or $apHn -eq $ApplianceHost) {
+        if ($apIp -eq $ApplianceHost -or $apHn -eq $ApplianceHost -or ($SiteName -and $apHn -eq $SiteName)) {
             foreach ($field in @('id', 'nePk', 'nepk')) {
                 if ($ap.PSObject.Properties[$field]) { $nePk = $ap.$field; break }
             }
@@ -238,7 +240,7 @@ function Get-ApplianceWanIP {
         }
     }
     if (-not $nePk) {
-        throw "Appliance '$ApplianceHost' not found in Orchestrator"
+        throw "Appliance '$ApplianceHost' (site '$SiteName') not found in Orchestrator"
     }
 
     # Get interface state
@@ -353,7 +355,7 @@ function Invoke-ConfigureSite {
         }
         Write-Host "  Resolving WAN IP from Orchestrator..." -NoNewline
         try {
-            $wanIp = Get-ApplianceWanIP -OrchHost $Orchestrator -Token $OrchToken -ApplianceHost $ECHost
+            $wanIp = Get-ApplianceWanIP -OrchHost $Orchestrator -Token $OrchToken -ApplianceHost $ECHost -SiteName $SiteName
             Write-Host " $wanIp"
         } catch {
             Write-Err "  $_"
