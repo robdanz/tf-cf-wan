@@ -73,10 +73,8 @@ cp sites.csv.proposed sites.csv
 terraform init
 terraform apply -parallelism=1
 
-# 4. Configure EdgeConnect appliances
-# Static sites:
-bash output/configure-tunnels.sh --username admin
-# NAT'd/dynamic sites (blank customer_gw_ip):
+# 4. Configure EdgeConnect appliances (--orchestrator is required for every site --
+#    the appliance's WAN IP is always resolved dynamically at run time)
 bash output/configure-tunnels.sh --username admin --orchestrator 10.0.0.100
 
 # 5. Rollback if needed
@@ -103,7 +101,7 @@ remote-nat,2,,10.0.0.3
 |---|---|---|
 | `site_name` | yes | Short unique name — becomes part of the tunnel name (e.g. `hq-pri`, `hq-sec`) |
 | `site_index` | yes | Unique integer starting at 0 — determines IP allocation; **never change or reuse once deployed** |
-| `customer_gw_ip` | no | CPE public WAN IP. Leave blank for NAT'd or dynamic CPE |
+| `customer_gw_ip` | no | Informational only — no longer affects tunnel config. The appliance's WAN IP is always resolved dynamically via Orchestrator when `configure-tunnels` runs, regardless of this value |
 | `ec_hostname` | yes | Management IP or hostname of the EdgeConnect appliance |
 
 Use `aruba/get_site_details.sh` (Mac/Linux) or `aruba\Get-SiteDetails.ps1` (Windows) to generate `sites.csv` automatically from your Orchestrator.
@@ -129,6 +127,8 @@ Use `aruba/get_site_details.sh` (Mac/Linux) or `aruba\Get-SiteDetails.ps1` (Wind
 | `health_check_rate` | no | `mid` | `low`, `mid`, or `high` |
 | `replay_protection` | no | `false` | IPsec anti-replay protection |
 
+> **Deploying from more than one machine/environment (e.g. testing Mac and Windows separately) against separate Terraform state?** Each has its own `terraform.tfvars`, since the file is gitignored. Make sure the health-check and IPsec values above are identical across all of them — `terraform.tfvars.example` ships with the correct production defaults, so the safest path is to always generate fresh `terraform.tfvars` files from the current example rather than reusing old ones.
+
 ### Output: cpe-config.csv
 
 Generated at `output/cpe-config.csv` after `terraform apply`.
@@ -140,7 +140,7 @@ Generated at `output/cpe-config.csv` after `terraform apply`.
 | `tunnel_name` | Cloudflare tunnel name (e.g. `hq-pri`) |
 | `tunnel_id` | Cloudflare tunnel UUID |
 | `cloudflare_anycast_ip` | Cloudflare endpoint IP |
-| `customer_gw_ip` | CPE WAN IP (blank for NAT'd sites) |
+| `customer_gw_ip` | Informational only, copied from `sites.csv` — not used to configure the tunnel |
 | `interface_address_cidr` | /31 tunnel subnet |
 | `cf_inside_ip` | Cloudflare inner tunnel IP |
 | `cpe_inside_ip` | IP to assign to CPE tunnel interface / VTI |
@@ -194,11 +194,17 @@ terraform destroy -parallelism=1
 terraform apply -parallelism=1
 ```
 
-**NAT'd sites: "orchestrator required" error**
-Pass `--orchestrator HOST` (Mac/Linux) or `-Orchestrator HOST` (Windows) to the configure script so it can resolve the appliance's current WAN IP at run time.
+**"orchestrator required" error**
+`--orchestrator HOST` (Mac/Linux) or `-Orchestrator HOST` (Windows) is required on every run, for every site — the appliance's WAN IP is always resolved dynamically at run time regardless of `customer_gw_ip`.
 
 **EdgeConnect login returns `401 "You are not authenticated"`**
 The scripts handle CSRF tokens automatically — this error means the login itself failed. Check that the management IP is reachable, and that the username and password are correct.
 
 **PowerShell script blocked on first run**
 Run `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser` once in PowerShell, then retry.
+
+**Tunnel and VTI create successfully but the tunnel never comes up (0 bytes in both directions)**
+The appliance's IPsec/IKE daemon requires the tunnel's `source` field to be an address actually bound to a local interface — it can't originate traffic from a NAT-translated public IP that isn't assigned to any interface. `configure-tunnels.sh`/`.ps1` always resolve this dynamically now, preferring the interface's real `ipv4` over Orchestrator's `publicIp`, so this shouldn't recur with a normal run. If it does:
+- On the appliance CLI, check tunnel status (exact command depends on your ECOS CLI/firmware — e.g. `sho tunnel <tunnel-name>` on some builds) and look for `Oper: Down` with zero WAN Tx/Rx bytes — that pattern means the appliance never even attempted to send traffic, which points at the `source`/VTI config rather than an IKE negotiation mismatch.
+- Confirm the resolved WAN IP actually matches the appliance's real WAN interface IP (not a NAT-translated one) — check the script's `Resolved WAN IP: ...` log line against `sho interface` (or your platform's equivalent) on the appliance.
+- Confirm the VTI's `side` field is `"wan"`, not `"lan"` — a LAN-side VTI accepts the config without error but never binds to the tunnel interface.

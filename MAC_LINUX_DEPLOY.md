@@ -257,7 +257,7 @@ cat sites.csv.proposed
 
 Check each row:
 - **`site_name`** — auto-generated from the appliance hostname. Edit if it's unclear or too long.
-- **`customer_gw_ip`** — the appliance's public WAN IP. If blank, the site is treated as NAT'd/dynamic. Verify this is intentional. If an appliance has multiple WAN interfaces, the script picks the first one with a public IP — edit if the wrong IP was chosen.
+- **`customer_gw_ip`** — informational only; it does not affect tunnel configuration (the appliance's WAN IP is always resolved dynamically from the Orchestrator when `configure-tunnels.sh` runs). If an appliance has multiple WAN interfaces and you want a specific one recorded here for reference, edit as needed — it's fine to leave as detected or blank either way.
 - **`ec_hostname`** — the management IP the configure script will connect to. The script sets this to the `mgmt0` IP for virtual appliances and the Orchestrator management IP for hardware appliances. Replace with a DNS name if you prefer.
 - **`site_index`** — auto-assigned in alphabetical order starting from 0. **Do not change or reuse these once a site has been deployed** — they control IP allocation and changing them forces tunnel recreation.
 
@@ -293,14 +293,14 @@ EOF
 |---|---|---|
 | `site_name` | Yes | Short unique name for the site. Becomes part of tunnel names: `hq-pri`, `hq-sec`. Letters, numbers, and hyphens only — no spaces. |
 | `site_index` | Yes | Unique integer starting at 0. **Controls which IP block is assigned to this site — never change or reuse once deployed.** Adding new sites: use the next available number. |
-| `customer_gw_ip` | No | The EdgeConnect appliance's public WAN IP. Leave blank if the appliance is behind NAT or has a dynamic IP. |
+| `customer_gw_ip` | No | Informational only — does not affect tunnel configuration. The appliance's WAN IP is always resolved dynamically via Orchestrator when `configure-tunnels.sh` runs, regardless of this value. Fine to leave blank. |
 | `ec_hostname` | Yes | The management IP address (or hostname) of the EdgeConnect appliance — what the configure script connects to. |
 
 **Finding `ec_hostname`:**
 - For **EC-V (virtual) appliances**: use the `mgmt0` interface IP.
 - For **hardware appliances (EC-S, EC-10104)**: use the Orchestrator's management IP for that appliance (`mgmt0` has no IP on hardware).
 
-**NAT'd or dynamic sites (`customer_gw_ip` left blank):** You will need `--orchestrator` when running `configure-tunnels.sh` so the script can resolve each appliance's current WAN IP at run time. See Part 6.
+**`--orchestrator` is required for every site** when running `configure-tunnels.sh`, regardless of `customer_gw_ip` — the appliance's current WAN IP is always resolved dynamically at run time. See Part 6.
 
 > **Tip for demo/testing without real hardware:** Run `bash aruba/demo_orchestrator.sh && cp sites.csv.proposed sites.csv` to generate a sample CSV with 10 simulated NAT'd sites.
 
@@ -418,7 +418,7 @@ terraform output -json tunnel_details
 - `terraform apply` must have completed successfully (this generates `output/configure-tunnels.sh`)
 - Your machine must be able to reach each appliance's management IP (the `ec_hostname` values from `sites.csv`)
 - You need the EdgeConnect admin credentials
-- For NAT'd/dynamic sites: network access to the Orchestrator and `ARUBA_API_TOKEN` set
+- Network access to the Orchestrator and `ARUBA_API_TOKEN` set — required for every site, since the appliance's WAN IP is always resolved dynamically at run time
 
 ### 6.1 — Dry Run First (Recommended)
 
@@ -434,13 +434,7 @@ This prints what it would do — which appliances it would connect to, which tun
 
 ### 6.2 — Run the Configuration
 
-**Static sites** (all sites have a `customer_gw_ip`):
-
-```bash
-bash output/configure-tunnels.sh --username admin
-```
-
-**NAT'd or dynamic sites** (any site has a blank `customer_gw_ip`): The script resolves each appliance's current WAN IP from the Orchestrator at run time.
+`--orchestrator` is required for every site — the script always resolves each appliance's current WAN IP from the Orchestrator at run time, regardless of `customer_gw_ip`.
 
 Make sure `ARUBA_API_TOKEN` is exported (from Step 4A.2), then:
 
@@ -477,6 +471,8 @@ The script is **idempotent** — if a tunnel already exists on the appliance, it
 ---
 
 ### 6.3 — Common Options
+
+> These examples show one flag at a time for clarity — in practice, add `--orchestrator ORCH_HOST` (and `ARUBA_API_TOKEN`/`--orch-token`) to all of them, since it's required on every run.
 
 **Different username:**
 ```bash
@@ -612,7 +608,7 @@ Type `yes` when prompted. This deletes all Cloudflare tunnels and static routes 
 
 1. Add new rows to `sites.csv`. Use the next available `site_index` (never reuse or change existing ones).
 2. Run `terraform apply -parallelism=1` — only new resources will be created, and the `output/` scripts are regenerated.
-3. Run `bash output/configure-tunnels.sh --username admin --sites new-appliance-ip` to configure only the new appliances.
+3. Run `bash output/configure-tunnels.sh --username admin --orchestrator ORCH_HOST --sites new-appliance-ip` to configure only the new appliances.
 
 ### Removing Sites
 
@@ -625,6 +621,8 @@ Type `yes` when prompted. This deletes all Cloudflare tunnels and static routes 
 If you change `terraform.tfvars` settings (health check direction, replay protection, etc.):
 1. Run `terraform apply -parallelism=1`
 2. No action is needed on the appliances for most Cloudflare-side changes.
+
+> **Testing both Mac/Linux and Windows separately, against separate Terraform state?** Each has its own gitignored `terraform.tfvars`. Make sure the health-check and IPsec values match across both — a `terraform.tfvars` copied from an old `terraform.tfvars.example` can carry stale defaults that silently diverge from the other deployment. Regenerate both from the current `terraform.tfvars.example` if in doubt.
 
 ### Getting the Current PSK
 
@@ -642,7 +640,7 @@ terraform output -raw tunnel_psk
 - Verify the token has at least **Site Admin, read-only** access
 
 ### get_site_details.sh shows all sites with blank customer_gw_ip
-All appliances are behind NAT or have dynamic WAN IPs. Check the WAN interfaces section of the summary — if no public IPs appear, the Orchestrator may not have current interface state. Try refreshing it from the Orchestrator UI, or fill in `customer_gw_ip` manually in `sites.csv`.
+All appliances are behind NAT or have dynamic WAN IPs (or the Orchestrator doesn't have current interface state). This is harmless — `customer_gw_ip` is informational only and doesn't affect tunnel configuration, since the appliance's WAN IP is always resolved dynamically at `configure-tunnels.sh` run time regardless of this value.
 
 ### "terraform: command not found"
 Terraform is not in your `PATH`. On Mac, if you installed via Homebrew: `brew doctor` and check for PATH issues. On Linux: verify `/usr/local/bin` is in your `PATH` with `echo $PATH`.
@@ -672,8 +670,13 @@ terraform apply -parallelism=1
 - Verify the username and password are correct
 - Verify HTTPS (port 443) is accessible on the appliance
 
-### configure-tunnels.sh returns "orchestrator required" for a NAT'd site
-Pass `--orchestrator HOST` to `configure-tunnels.sh`. The Orchestrator is needed to resolve the appliance's current WAN IP at run time for sites where `customer_gw_ip` is blank.
+### configure-tunnels.sh returns "orchestrator required"
+Pass `--orchestrator HOST` to `configure-tunnels.sh`. This is required for every site now, not just NAT'd ones — the Orchestrator is always needed to resolve the appliance's current WAN IP at run time, regardless of `customer_gw_ip`.
+
+### Tunnel and VTI create successfully (HTTP 200) but the tunnel never comes up
+Check the tunnel's status on the appliance itself (the exact command depends on your ECOS CLI/firmware) — look for `Oper: Down` with **zero bytes transmitted in both directions**. That specific pattern (not just "down", but zero TX too) means the appliance never even attempted to send traffic, which points at the tunnel's `source` field or the VTI's `side` field rather than an IKE negotiation mismatch:
+- `source` must be an address actually bound to the appliance's local WAN interface. `configure-tunnels.sh` always resolves this dynamically now, preferring the interface's real `ipv4` over Orchestrator's `publicIp` field — a NAT-translated public IP isn't assigned to any local interface and can't be used to originate packets. Check the script's `Resolved WAN IP: ...` log line against the appliance's actual WAN interface IP.
+- The VTI's `side` field must be `"wan"`, not `"lan"` — a LAN-side VTI accepts the config without error but never binds to the tunnel interface, so it looks configured but never establishes.
 
 ### Tunnel exists on appliance but not on Cloudflare (or vice versa)
 `configure-tunnels.sh` is idempotent on the appliance side (skips existing tunnels). If a tunnel is stuck in a partial state:
