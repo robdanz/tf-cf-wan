@@ -47,8 +47,12 @@ locals {
       site_name = [for k, t in local.tunnel_definitions : t.site_name if t.ec_hostname == ec_host][0]
       tunnels = [
         for k in sort([for k2, t2 in local.tunnel_definitions : k2 if t2.ec_hostname == ec_host]) : {
-          tunnel_name   = k
-          source        = local.tunnel_definitions[k].customer_gw_ip
+          tunnel_name = k
+          # Always dynamically resolved via Orchestrator at run time, regardless of
+          # customer_gw_ip -- tunnels are identified by FQDN ID (ike_id_local), not
+          # source IP, so there's no benefit to trusting a static customer_gw_ip here
+          # and it's simpler to manage one code path for a mix of NAT'd and static sites.
+          source        = ""
           destination   = local.tunnel_definitions[k].cloudflare_endpoint
           cpe_inside_ip = local.tunnel_ips[k].cpe_ip
           prefix_len    = tonumber(split("/", local.tunnel_ips[k].interface_cidr)[1])
@@ -64,7 +68,7 @@ locals {
               mode             = "ipsec_ip"
               nat_mode         = "none"
               peername         = "Cloudflare_IPSec"
-              source           = local.tunnel_definitions[k].customer_gw_ip != "" ? local.tunnel_definitions[k].customer_gw_ip : "0.0.0.0"
+              source           = "0.0.0.0"
               destination      = local.tunnel_definitions[k].cloudflare_endpoint
               max_bw_auto      = true
               local_vrf        = 0

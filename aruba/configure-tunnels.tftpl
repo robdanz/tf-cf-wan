@@ -10,8 +10,9 @@
 #                             [--orchestrator HOST] [--orch-token TOKEN]
 #                             [--sites HOST1,HOST2] [--verify-ssl]
 #
-# --orchestrator is required for NAT'd/dynamic sites (blank customer_gw_ip).
-#   It is used to resolve the appliance's current WAN IP at run time.
+# --orchestrator is required for ALL sites -- the appliance's WAN IP is always
+#   resolved dynamically at run time (regardless of customer_gw_ip in sites.csv),
+#   since tunnels are identified by FQDN ID, not source IP.
 # --orch-token (or $ARUBA_API_TOKEN) provides the Orchestrator API token.
 # --sites filters by appliance IP/hostname (comma-separated). Default: all.
 # PSK and tunnel IDs are embedded at terraform apply time — treat this file as a secret.
@@ -68,15 +69,14 @@ if _site_selected "${ap.ec_host}"; then
 
   _skip=false
 
-  # Patch 0.0.0.0 source IPs for NAT'd/dynamic sites at run time.
-  # The payload has source=0.0.0.0 for any tunnel where customer_gw_ip was blank.
-  # We resolve the appliance's current WAN IP from the Orchestrator and substitute it.
+  # Patch 0.0.0.0 source IPs at run time for every tunnel -- source is always
+  # resolved dynamically from the Orchestrator, regardless of customer_gw_ip.
   _wan_ip=""
 %{ for t in ap.tunnels ~}
 %{ if t.source == "" ~}
-  # Tunnel ${t.tunnel_name}: NAT'd/dynamic — resolve WAN IP from Orchestrator
+  # Tunnel ${t.tunnel_name}: resolve WAN IP from Orchestrator
   if [[ -z "$ORCH_HOST" ]]; then
-    _warn "  --orchestrator required for ${ap.site_name} (NAT'd site) — skipping"
+    _warn "  --orchestrator required for ${ap.site_name} — skipping"
     _skip=true
   elif [[ -z "$_wan_ip" ]]; then
     if [[ -z "$ORCH_TOKEN" ]]; then
@@ -95,9 +95,14 @@ if _site_selected "${ap.ec_host}"; then
       else
         _iface_json=$(curl -s $K -H "X-Auth-Token: $ORCH_TOKEN" -H "Accept: application/json" \
           "https://$ORCH_HOST/gms/rest/interfaceState?nePk=$_ne_pk&cached=true" 2>/dev/null || echo "{}")
+        # The tunnel's "source" field must be an address actually bound to a local
+        # interface, so the appliance can bind/originate IKE and ESP packets from it.
+        # Prefer the interface's own ipv4 -- if the appliance sits behind NAT, the
+        # upstream NAT device transparently rewrites this to the public IP in flight;
+        # publicIp itself is never assigned to any local interface and can't be bound.
         _wan_ip=$(echo "$_iface_json" | jq -r '
-          ([ .ifInfo[] | select((.ifname | startswith("wan")) and .oper == true and (.publicIp // "") != "") | .publicIp ] | first) //
           ([ .ifInfo[] | select((.ifname | startswith("wan")) and .oper == true and (.ipv4 // "") != "" and .ipv4 != "0.0.0.0") | .ipv4 ] | first) //
+          ([ .ifInfo[] | select((.ifname | startswith("wan")) and .oper == true and (.publicIp // "") != "") | .publicIp ] | first) //
           ""
         ' 2>/dev/null || echo "")
         if [[ -z "$_wan_ip" ]]; then
@@ -156,11 +161,15 @@ if _site_selected "${ap.ec_host}"; then
             "https://${ap.ec_host}/rest/json/virtualif/vti" \
             | jq -r '[keys[] | select(test("^vti[0-9]+$")) | ltrimstr("vti") | tonumber] | if length == 0 then 110 else (max + 1) end' \
             2>/dev/null || echo "110")
+          # Minimal payload — only fields visible in ECOS UI. Extra fields
+          # (behindNAT, role_id, auto_distribute, gms_marked, aliases, vrf_id, zone)
+          # cause HTTP 500 on this firmware. side must be "wan" (not "lan") --
+          # a LAN-side VTI accepts the POST but never binds to the tunnel interface.
           _vhttp=$(curl -s $K -o /tmp/_vti_$$.json -w "%%{http_code}" \
             -b "$_C" -H "X-XSRF-TOKEN: $_csrf" \
             -X POST "https://${ap.ec_host}/rest/json/virtualif/vti/vti$_vti_next" \
             -H 'Content-Type: application/json' \
-            -d '{"admin":true,"auto_distribute":false,"behindNAT":"none","gms_marked":false,"ipaddr":"${t.cpe_inside_ip}","ipaddr_alias":"0.0.0.0","label":"","label_alias":"","nmask":${t.prefix_len},"nmask_alias":0,"role_id":0,"side":"lan","tunnel":"${t.tunnel_name}","vrf_id":0,"zone":0}')
+            -d '{"admin":true,"ipaddr":"${t.cpe_inside_ip}","nmask":${t.prefix_len},"side":"wan","tunnel":"${t.tunnel_name}"}')
           if [[ "$_vhttp" == "200" || "$_vhttp" == "201" || "$_vhttp" == "204" ]]; then
             _info "    VTI OK (vti$_vti_next)"
           else

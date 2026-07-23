@@ -6,8 +6,9 @@
 #                                  [-Orchestrator HOST] [-OrchToken TOKEN]
 #                                  [-Sites SITE1,SITE2] [-DryRun] [-VerifySSL]
 #
-# -Orchestrator is required for NAT'd/dynamic sites (blank customer_gw_ip).
-#   It is used to resolve each appliance's current WAN IP at run time.
+# -Orchestrator is required for ALL sites -- the appliance's WAN IP is always
+#   resolved dynamically at run time (regardless of customer_gw_ip in sites.csv),
+#   since tunnels are identified by FQDN ID, not source IP.
 # -OrchToken (or $env:ARUBA_API_TOKEN) provides the Orchestrator API token.
 # -Sites filters by appliance IP/hostname (comma-separated). Default: all sites.
 # PSK and all tunnel data are embedded -- no terraform dependency at run time.
@@ -138,7 +139,7 @@ function Invoke-ECAPI {
 }
 
 # ---------------------------------------------------------------------------
-# Orchestrator helpers -- used only for NAT'd/dynamic sites to resolve WAN IP
+# Orchestrator helpers -- used for every site to resolve the appliance's live WAN IP
 # ---------------------------------------------------------------------------
 
 # PS5.1 ConvertFrom-Json is case-insensitive and crashes on duplicate keys that
@@ -253,17 +254,21 @@ function Get-ApplianceWanIP {
     $ifInfo = if ($ifaces.PSObject.Properties['ifInfo']) { @($ifaces.ifInfo) } else { @() }
     $wanIfs = @($ifInfo | Where-Object { $_.ifname -like "wan*" -and $_.oper -eq $true })
 
-    # Prefer publicIp (routable), fall back to ipv4
+    # The tunnel's "source" field must be an address actually bound to a local
+    # interface, so the appliance can bind/originate IKE and ESP packets from it.
+    # Prefer the interface's own ipv4 -- if the appliance sits behind NAT, the
+    # upstream NAT device transparently rewrites this to the public IP in flight;
+    # publicIp itself is never assigned to any local interface and can't be bound.
     $wanIp = $null
     foreach ($wif in $wanIfs) {
-        if ($wif.PSObject.Properties['publicIp'] -and $wif.publicIp -and $wif.publicIp -ne "0.0.0.0") {
-            $wanIp = $wif.publicIp; break
+        if ($wif.PSObject.Properties['ipv4'] -and $wif.ipv4 -and $wif.ipv4 -ne "0.0.0.0") {
+            $wanIp = $wif.ipv4; break
         }
     }
     if (-not $wanIp) {
         foreach ($wif in $wanIfs) {
-            if ($wif.PSObject.Properties['ipv4'] -and $wif.ipv4 -and $wif.ipv4 -ne "0.0.0.0") {
-                $wanIp = $wif.ipv4; break
+            if ($wif.PSObject.Properties['publicIp'] -and $wif.publicIp -and $wif.publicIp -ne "0.0.0.0") {
+                $wanIp = $wif.publicIp; break
             }
         }
     }
@@ -302,12 +307,14 @@ function New-VTI {
     $nextNum = if ($nums) { ($nums | Measure-Object -Maximum).Maximum + 1 } else { 110 }
     $vtiKey  = "vti$nextNum"
 
-    # Minimal payload — only fields visible in ECOS UI
+    # Minimal payload — only fields visible in ECOS UI. side must be "wan" (not
+    # "lan") -- a LAN-side VTI accepts the POST but never binds to the tunnel
+    # interface, so the tunnel configures without error but never comes up.
     $vtiObj = @{
         admin  = $true
         ipaddr = $Tunnel.CpeInsideIP
         nmask  = [int]$Tunnel.PrefixLen
-        side   = "lan"
+        side   = "wan"
         tunnel = $Tunnel.Name
     }
 
@@ -334,19 +341,20 @@ function Invoke-ConfigureSite {
 
     if ($DryRun) {
         foreach ($t in $Tunnels) {
-            $src = if ($t.Source) { $t.Source } else { "(NAT'd -- will resolve from Orchestrator)" }
+            $src = if ($t.Source) { $t.Source } else { "(will resolve from Orchestrator)" }
             Write-Info "  [DRY RUN] Would create tunnel: $($t.Name)  source=$src"
             Write-Info "  [DRY RUN] Would create VTI: $($t.Name)  ip=$($t.CpeInsideIP)/$($t.PrefixLen)"
         }
         return $true
     }
 
-    # Resolve WAN IP from Orchestrator for NAT'd/dynamic sites
+    # Source is always resolved dynamically from the Orchestrator, regardless of
+    # customer_gw_ip -- tunnels are identified by FQDN ID, not source IP.
     $wanIp = $null
     $hasNat = $Tunnels | Where-Object { -not $_.Source } | Select-Object -First 1
     if ($hasNat) {
         if (-not $Orchestrator) {
-            Write-Err "  -Orchestrator required for $SiteName (NAT'd site) -- skipping"
+            Write-Err "  -Orchestrator required for $SiteName -- skipping"
             return $false
         }
         if (-not $OrchToken) {
@@ -389,7 +397,7 @@ function Invoke-ConfigureSite {
         }
 
         # Payload is pre-built JSON embedded at terraform apply time.
-        # For NAT'd sites (Source==""), patch the 0.0.0.0 placeholder with the resolved WAN IP.
+        # Source is always "" -- patch the 0.0.0.0 placeholder with the resolved WAN IP.
         $payloadJson = $t.Payload
         if (-not $t.Source) {
             $payloadJson = $payloadJson -replace '"source":"0.0.0.0"', "`"source`":`"$wanIp`""

@@ -29,12 +29,12 @@ health_check_enabled = true
 # direction: "unidirectional" | "bidirectional"
 #   unidirectional - probe arrives via tunnel, reply returns over open Internet
 #   bidirectional  - both probe and reply travel through the tunnel
-health_check_direction = "unidirectional"
+health_check_direction = "bidirectional"
 
 # type: "reply" | "request"
 #   reply   - Cloudflare sends an ICMP echo request, customer device replies
 #   request - customer device sends the ICMP echo request
-health_check_type = "reply"
+health_check_type = "request"
 
 # rate: "low" | "mid" | "high"
 #   low  - ~1 probe/min
